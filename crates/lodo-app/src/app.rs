@@ -351,7 +351,7 @@ impl App {
                                 dot(ui, color);
                                 ui.label(RichText::new(text).color(color));
                             });
-                            if s.web_port.is_some_and(|p| p != 0 && p != 80) {
+                            if !s.forwards().is_empty() {
                                 let https = s.https_target().is_some() && https_trusted == Some(true);
                                 let url = format!("{}://{fqdn}", if https { "https" } else { "http" });
                                 ui.horizontal_wrapped(|ui| {
@@ -524,14 +524,18 @@ impl App {
             ui.vertical(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut ed.web_port).hint_text("mis. 3002 (boleh kosong)").desired_width(170.0));
                 let host = if ed.name.trim().is_empty() { "nama".to_string() } else { ed.name.trim().to_string() };
-                let hint = match ed.web_port.trim().parse::<u16>() {
-                    Ok(p) if p != 80 && p != 0 => format!("Cukup buka http://{host}.{} tanpa \":{p}\".", config.domain),
-                    _ => "Isi kalau aplikasi webnya jalan di port selain 80, supaya tidak perlu mengetik :port.".into(),
+                let port = ed.web_port.trim().parse::<u16>().ok().filter(|&p| p != 0);
+                let hint = match port {
+                    Some(443) => "443 adalah port HTTPS. Isi port tempat aplikasi web berjalan di server (mis. 80, 3000, 8080). HTTPS dibuat otomatis oleh lodo.".to_string(),
+                    Some(80) => "Aplikasi web di port 80 (bawaan).".to_string(),
+                    Some(p) => format!("Cukup buka http://{host}.{} tanpa \":{p}\".", config.domain),
+                    None => "Port tempat aplikasi web berjalan di server, mis. 80, 3000, atau 8080.".into(),
                 };
-                ui.label(RichText::new(hint).weak());
-                if matches!(ed.web_port.trim().parse::<u16>(), Ok(p) if p != 80 && p != 0) {
+                let warn = port == Some(443);
+                ui.label(if warn { RichText::new(hint).color(Color32::from_rgb(220, 140, 30)) } else { RichText::new(hint).weak() });
+                if port.is_some_and(|p| p != 443) {
                     ui.checkbox(&mut ed.https, format!("HTTPS juga: https://{host}.{}", config.domain));
-                } else {
+                } else if port.is_none() {
                     ui.label(RichText::new("HTTPS (https://) tersedia setelah Port web diisi.").weak());
                 }
             });

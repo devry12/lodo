@@ -94,9 +94,13 @@ impl Server {
     /// Port yang diteruskan lodo: (port di alamat lodo, port di server).
     /// Kosong berarti tanpa penerusan: nama langsung mengarah ke IP server.
     pub fn forwards(&self) -> Vec<(u16, u16)> {
-        let Some(web) = self.web_port.filter(|&p| p != 80 && p != 0) else {
+        let Some(web) = self.web_port.filter(|&p| p != 0) else {
             return Vec::new();
         };
+        // Aplikasi di port 80 tanpa HTTPS tidak perlu diteruskan: nama langsung ke IP.
+        if web == 80 && !self.https {
+            return Vec::new();
+        }
         let mut out = vec![(80, web)];
         for p in [web, self.port].into_iter().chain(self.extra_ports.iter().copied()) {
             if p != 0 && !out.iter().any(|(l, _)| *l == p) {
@@ -183,7 +187,12 @@ mod tests {
     #[test]
     fn forwards() {
         assert!(server(None, vec![2222]).forwards().is_empty());
-        assert!(server(Some(80), vec![]).forwards().is_empty());
+        let mut plain80 = server(Some(80), vec![]);
+        plain80.https = false;
+        assert!(plain80.forwards().is_empty());
+        // Port 80 + HTTPS: diteruskan supaya https:// bisa dilayani.
+        assert_eq!(server(Some(80), vec![]).forwards(), vec![(80, 80), (22, 22)]);
+        assert_eq!(server(Some(80), vec![]).https_target(), Some(80));
         assert_eq!(server(Some(3002), vec![]).forwards(), vec![(80, 3002), (3002, 3002), (22, 22)]);
         assert_eq!(server(Some(3002), vec![2222, 22, 80]).forwards(), vec![(80, 3002), (3002, 3002), (22, 22), (2222, 2222)]);
     }
