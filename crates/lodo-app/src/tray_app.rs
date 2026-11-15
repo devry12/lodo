@@ -28,7 +28,7 @@ enum Ev {
     UpdateNow(bool),
     UpdateFailed(String),
     /// Pembaruan terpasang: keluar supaya versi baru bisa jalan.
-    Restart(String),
+    Restart,
 }
 
 const UPDATE_FIRST: Duration = Duration::from_secs(15);
@@ -46,10 +46,16 @@ struct TrayApp {
 
 pub fn run(open_window: bool) {
     // Hanya satu tray. Kalau sudah ada, minta tray itu membuka jendela.
-    let Ok(listener) = TcpListener::bind(TRAY_LOCK) else {
-        shared::poke(TRAY_LOCK);
+    // LODO_TRAY_LOCK: jalankan tray kedua untuk pengujian.
+    let lock = std::env::var("LODO_TRAY_LOCK").unwrap_or_else(|_| TRAY_LOCK.into());
+    let Ok(listener) = TcpListener::bind(&lock) else {
+        shared::poke(&lock);
         return;
     };
+
+    // Beri tahu bundle id langsung supaya tidak perlu mencarinya lewat AppleScript.
+    #[cfg(target_os = "macos")]
+    let _ = notify_rust::set_application("id.lodo.app");
 
     let mut builder = EventLoop::<Ev>::with_user_event();
     #[cfg(target_os = "macos")]
@@ -112,8 +118,13 @@ pub fn run(open_window: bool) {
     let _ = event_loop.run_app(&mut app);
 }
 
+/// Tampilkan notifikasi di thread terpisah: di macOS pustaka notifikasi bisa
+/// memanggil AppleScript yang sesekali macet, dan itu tidak boleh menahan tray.
 fn notify(body: &str) {
-    let _ = notify_rust::Notification::new().summary("lodo").body(body).show();
+    let body = body.to_string();
+    thread::spawn(move || {
+        let _ = notify_rust::Notification::new().summary("lodo").body(&body).show();
+    });
 }
 
 /// Periksa pembaruan saat mulai lalu tiap 6 jam.
@@ -159,7 +170,7 @@ impl TrayApp {
             };
             let ev = match m {
                 Ok(Some(m)) => match updater::install(&m, open_window) {
-                    Ok(()) => Ev::Restart(m.version),
+                    Ok(()) => Ev::Restart,
                     Err(e) => Ev::UpdateFailed(e),
                 },
                 Ok(None) => Ev::UpdateFailed(String::new()),
@@ -247,9 +258,10 @@ impl ApplicationHandler<Ev> for TrayApp {
                     notify(&format!("Pembaruan gagal: {e}"));
                 }
             }
-            Ev::Restart(v) => {
-                notify(&format!("lodo diperbarui ke versi {v}."));
-                // Helper memperbarui dirinya sendiri (sudah berhak admin).
+            Ev::Restart => {
+                // Langsung keluar supaya versi baru bisa dibuka; jangan menunggu apa pun
+                // di thread utama (dulu notifikasi di sini bisa macet dan menahan restart).
+                // Helper memperbarui dirinya sendiri (balasan IPC-nya instan).
                 helper::request_update();
                 if let Some(c) = &mut self.window {
                     let _ = c.kill();

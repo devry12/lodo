@@ -1,6 +1,6 @@
 [package]
 name = "lodo-release"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2024"
 publish = false
 description = "Alat rilis: buat kunci, tulis dan tanda tangani latest.json"
