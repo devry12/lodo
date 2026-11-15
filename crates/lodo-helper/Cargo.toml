@@ -1,8 +1,12 @@
 [package]
 name = "lodo-helper"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 
 [dependencies]
+base64 = "0.23.1"
 if-addrs = "0.15.0"
 lodo-core = { path = "../lodo-core" }
+rcgen = { version = "0.14.10", features = ["x509-parser"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+time = "0.3.55"

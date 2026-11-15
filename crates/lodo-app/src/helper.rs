@@ -36,6 +36,87 @@ pub fn set_config(c: &Config) -> Result<(), String> {
     }
 }
 
+const CA_NAME: &str = "lodo Local CA";
+
+/// Sudah dipercayakah CA lokal untuk HTTPS? None = helper lama / mati / CA belum ada.
+pub fn https_trusted() -> Option<bool> {
+    let Ok(Response::Https { trusted, ca }) = ipc::send(&Request::HttpsStatus) else { return None };
+    if cfg!(target_os = "macos") {
+        return ca.map(|p| mac_trusted(&p));
+    }
+    Some(trusted)
+}
+
+/// macOS: cek trust dengan pengaturan pengguna ini. Hasil disimpan sebentar
+/// supaya tidak menjalankan `security` tiap 3 detik.
+fn mac_trusted(ca: &str) -> bool {
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<(String, bool, Instant)>> = Mutex::new(None);
+    let fp = std::fs::read(ca).map(|b| lodo_core::update::sha256_hex(&b)).unwrap_or_default();
+    let mut c = CACHE.lock().unwrap();
+    if let Some((f, ok, at)) = c.as_ref()
+        && *f == fp
+        && (*ok || at.elapsed() < Duration::from_secs(20))
+    {
+        return *ok;
+    }
+    let ok = Command::new("/usr/bin/security")
+        .args(["verify-cert", "-q", "-p", "ssl", "-c", ca])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    *c = Some((fp, ok, Instant::now()));
+    ok
+}
+
+fn login_keychain() -> String {
+    format!("{}/Library/Keychains/login.keychain-db", std::env::var("HOME").unwrap_or_default())
+}
+
+/// Daftarkan CA lokal lodo supaya HTTPS dipercaya.
+/// macOS: ke keychain pengguna (memunculkan dialog password macOS).
+/// Windows/Linux: lewat helper dengan izin admin.
+pub fn trust_ca() -> Result<(), String> {
+    if !cfg!(target_os = "macos") {
+        return run_elevated("trust");
+    }
+    let ca = match ipc::send(&Request::HttpsStatus)? {
+        Response::Https { ca: Some(ca), .. } => ca,
+        _ => return Err("Sertifikat lodo belum dibuat. Isi Port web di salah satu server dulu.".into()),
+    };
+    let kc = login_keychain();
+    untrust_ca_user();
+    let out = Command::new("/usr/bin/security")
+        .args(["add-trusted-cert", "-r", "trustRoot", "-p", "ssl", "-k", &kc, &ca])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        let err = String::from_utf8_lossy(&out.stderr);
+        if err.contains("canceled") || err.contains("denied") {
+            Err("Dibatalkan. HTTPS lokal belum aktif.".into())
+        } else {
+            Err(format!("Gagal mengaktifkan HTTPS: {}", err.trim()))
+        }
+    }
+}
+
+/// macOS: hapus CA lodo dari keychain pengguna.
+pub fn untrust_ca_user() {
+    if cfg!(target_os = "macos") {
+        let kc = login_keychain();
+        for _ in 0..10 {
+            let ok = Command::new("/usr/bin/security")
+                .args(["delete-certificate", "-c", CA_NAME, "-t", &kc])
+                .output()
+                .is_ok_and(|o| o.status.success());
+            if !ok {
+                break;
+            }
+        }
+    }
+}
+
 /// Minta helper memperbarui dirinya (tanpa izin admin; helper sudah berhak admin).
 pub fn request_update() {
     let _ = ipc::send(&Request::Update);
@@ -100,5 +181,7 @@ pub fn install() -> Result<(), String> {
 }
 
 pub fn uninstall() -> Result<(), String> {
-    run_elevated("uninstall")
+    run_elevated("uninstall")?;
+    untrust_ca_user();
+    Ok(())
 }

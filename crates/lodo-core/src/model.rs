@@ -39,6 +39,13 @@ pub struct Server {
     /// Port lain yang ikut diteruskan apa adanya saat `web_port` aktif.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_ports: Vec<u16>,
+    /// HTTPS lokal (https://git.home.arpa) saat `web_port` aktif.
+    #[serde(default = "default_true")]
+    pub https: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_port() -> u16 {
@@ -97,6 +104,17 @@ impl Server {
             }
         }
         out
+    }
+
+    /// Port web yang dilayani lewat HTTPS di port 443, kalau aktif.
+    pub fn https_target(&self) -> Option<u16> {
+        if !self.https {
+            return None;
+        }
+        let fwd = self.forwards();
+        let (_, web) = *fwd.first()?;
+        // Port 443 sudah diteruskan apa adanya, atau aplikasinya sendiri di 443.
+        (web != 443 && !fwd.iter().any(|(l, _)| *l == 443)).then_some(web)
     }
 
     /// Daftar kandidat berurutan: rumah dulu, lalu VPN.
@@ -158,6 +176,7 @@ mod tests {
             aliases: vec![],
             web_port: web,
             extra_ports: extra,
+            https: true,
         }
     }
 
@@ -170,9 +189,20 @@ mod tests {
     }
 
     #[test]
+    fn https_target() {
+        assert_eq!(server(Some(3002), vec![]).https_target(), Some(3002));
+        assert_eq!(server(None, vec![]).https_target(), None);
+        assert_eq!(server(Some(3002), vec![443]).https_target(), None);
+        let mut s = server(Some(3002), vec![]);
+        s.https = false;
+        assert_eq!(s.https_target(), None);
+    }
+
+    #[test]
     fn old_config_still_loads() {
         let s: Server = serde_json::from_str(r#"{"name":"git","home_ip":"10.0.0.1"}"#).unwrap();
         assert_eq!(s.web_port, None);
         assert!(s.extra_ports.is_empty());
+        assert!(s.https);
     }
 }

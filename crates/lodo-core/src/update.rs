@@ -161,6 +161,10 @@ pub fn sha256_file(path: &Path) -> std::io::Result<String> {
     }
 }
 
+pub fn sha256_hex(data: &[u8]) -> String {
+    hex(&Sha256::digest(data))
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }

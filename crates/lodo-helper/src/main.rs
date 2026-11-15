@@ -5,8 +5,10 @@
 //!   lodo-helper install    pasang helper sebagai service (butuh admin)
 //!   lodo-helper uninstall  hapus service + bersihkan hosts (butuh admin)
 //!   lodo-helper update     perbarui binary ini ke versi terbaru (tanpa restart)
+//!   lodo-helper trust      daftarkan CA lokal lodo untuk HTTPS (butuh admin)
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod ca;
 mod forward;
 mod service;
 mod selfupdate;
@@ -31,6 +33,7 @@ fn main() {
         "install" => service::install(),
         "uninstall" => service::uninstall(),
         "update" => selfupdate::update_cli(),
+        "trust" => ca::trust().map(|_| println!("Sertifikat lodo dipercaya. HTTPS lokal aktif.")),
         "--version" => {
             println!("{}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -127,6 +130,7 @@ fn run() -> Result<(), String> {
 
     // Loop utama: cek saat dipicu atau tiap 30 detik.
     let mut fwd = forward::Forwarder::default();
+    let mut leaf = ca::LeafCache::default();
     let mut first = true;
     loop {
         if !first {
@@ -137,11 +141,11 @@ fn run() -> Result<(), String> {
             while rx.try_recv().is_ok() {} // gabungkan pemicu beruntun
         }
         first = false;
-        check_once(&state, &mut fwd);
+        check_once(&state, &mut fwd, &mut leaf);
     }
 }
 
-fn check_once(state: &Arc<Mutex<State>>, fwd: &mut forward::Forwarder) {
+fn check_once(state: &Arc<Mutex<State>>, fwd: &mut forward::Forwarder, leaf: &mut ca::LeafCache) {
     let config = state.lock().unwrap().config.clone();
     // Cek semua server paralel.
     let handles: Vec<_> = config
@@ -153,6 +157,7 @@ fn check_once(state: &Arc<Mutex<State>>, fwd: &mut forward::Forwarder) {
     let mut status = Vec::new();
     let mut entries = Vec::new();
     let mut forwards = HashMap::new();
+    let mut https_names = Vec::new();
     let mut n_loopback = 0;
     for h in handles {
         let Ok((s, (route, ip))) = h.join() else { continue };
@@ -163,14 +168,21 @@ fn check_once(state: &Arc<Mutex<State>>, fwd: &mut forward::Forwarder) {
             n_loopback += 1;
             entries.push((lo.to_string(), s.all_names(&config.domain)));
             for (listen, target) in ports {
-                forwards.insert(SocketAddr::new(IpAddr::V4(lo), listen), ip.map(|ip| SocketAddr::new(ip, target)));
+                let to = ip.map(|ip| SocketAddr::new(ip, target));
+                forwards.insert(SocketAddr::new(IpAddr::V4(lo), listen), forward::Target { to, tls: false });
+            }
+            if let Some(web) = s.https_target() {
+                let to = ip.map(|ip| SocketAddr::new(ip, web));
+                forwards.insert(SocketAddr::new(IpAddr::V4(lo), 443), forward::Target { to, tls: true });
+                https_names.extend(s.all_names(&config.domain));
             }
         } else if let Some(ip) = ip {
             entries.push((ip.to_string(), s.all_names(&config.domain)));
         }
         status.push(ServerStatus { name: s.name.clone(), fqdn: s.fqdn(&config.domain), ip: ip.map(|i| i.to_string()), route });
     }
-    fwd.apply(&forwards);
+    https_names.sort();
+    fwd.apply(&forwards, leaf.get(&https_names));
     match hosts::update_file(&hosts::hosts_path(), &entries) {
         Ok(true) => hosts::flush_dns(),
         Ok(false) => {}
@@ -197,6 +209,7 @@ fn handle(conn: std::net::TcpStream, state: &Arc<Mutex<State>>, tx: &Sender<()>,
             let _ = update_tx.send(());
             Response::Ok
         }
+        Request::HttpsStatus => Response::Https { trusted: ca::is_trusted(), ca: ca::ca_path() },
         Request::SetConfig(mut c) => {
             c.domain = c.domain.trim().trim_end_matches('.').to_ascii_lowercase();
             match c.validate().and_then(|_| save_config(&c)) {

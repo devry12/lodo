@@ -50,6 +50,13 @@ pub fn install() -> Result<(), String> {
     let bin = installed_path();
     copy_self(&bin)?;
     start_service(&bin)?;
+    // HTTPS lokal: di Windows/Linux daftarkan CA sekarang, selagi punya izin admin.
+    // (macOS menolak perubahan trust tanpa dialog; app yang mendaftarkannya.)
+    if !cfg!(target_os = "macos")
+        && let Err(e) = crate::ca::trust()
+    {
+        eprintln!("lodo-helper: HTTPS lokal belum aktif: {e}");
+    }
     println!("lodo-helper terpasang di {}", bin.display());
     Ok(())
 }
@@ -61,6 +68,7 @@ pub fn uninstall() -> Result<(), String> {
         hosts::flush_dns();
     }
     crate::forward::remove_loopback_aliases();
+    crate::ca::untrust_and_delete();
     let _ = std::fs::remove_file(installed_path());
     println!("lodo-helper dihapus, file hosts sudah dibersihkan.");
     Ok(())

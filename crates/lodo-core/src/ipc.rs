@@ -28,6 +28,8 @@ pub enum Request {
     Recheck,
     /// Minta helper memeriksa dan memasang pembaruannya sendiri sekarang.
     Update,
+    /// Apakah CA lokal untuk HTTPS sudah dipercaya sistem?
+    HttpsStatus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,6 +39,9 @@ pub enum Response {
     Status(Vec<ServerStatus>),
     Ok,
     Error(String),
+    /// `trusted`: CA sudah didaftarkan helper ke sistem (Windows/Linux).
+    /// `ca`: lokasi ca.pem kalau sudah ada (di macOS app sendiri yang mendaftarkannya).
+    Https { trusted: bool, ca: Option<String> },
 }
 
 pub fn send(req: &Request) -> Result<Response, String> {

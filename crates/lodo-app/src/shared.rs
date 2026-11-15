@@ -43,6 +43,8 @@ pub fn open_url(url: &str) {
 pub struct Live {
     pub helper_version: Option<String>,
     pub status: Vec<ServerStatus>,
+    /// CA lokal untuk HTTPS sudah dipercaya sistem?
+    pub https_trusted: Option<bool>,
 }
 
 pub fn mood(live: &Live) -> (Mood, String) {
@@ -72,8 +74,10 @@ pub fn spawn_poller(live: Arc<Mutex<Live>>, on_change: impl Fn(&[String]) + Send
     thread::spawn(move || {
         loop {
             let helper_version = helper::ping();
-            let status = if helper_version.is_some() { helper::status().unwrap_or_default() } else { Vec::new() };
-            let new = Live { helper_version, status };
+            let up = helper_version.is_some();
+            let status = if up { helper::status().unwrap_or_default() } else { Vec::new() };
+            let https_trusted = if up { helper::https_trusted() } else { None };
+            let new = Live { helper_version, status, https_trusted };
             let changed = {
                 let mut l = live.lock().unwrap();
                 if *l != new {

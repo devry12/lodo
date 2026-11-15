@@ -5,16 +5,29 @@
 //! diberi alamat loopback sendiri (127.77.0.x). Nama lodo mengarah ke alamat
 //! itu, dan helper meneruskan koneksi TCP ke IP server yang sedang dipilih
 //! (rumah atau VPN). Karena diteruskan di level TCP, protokol apa pun jalan.
+//!
+//! Port 443 bisa diberi mode TLS: helper membuka HTTPS dengan sertifikat dari
+//! CA lokal (lihat ca.rs), lalu meneruskan isinya ke port web di server.
 
 use std::collections::HashMap;
-use std::io;
+use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Tujuan sebuah alamat dengar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Target {
+    /// None = server sedang tidak terjangkau; koneksi ditolak.
+    pub to: Option<SocketAddr>,
+    /// Buka TLS di sisi klien (HTTPS lokal) sebelum meneruskan.
+    pub tls: bool,
+}
 
 /// Alamat loopback untuk server penerusan ke-`n` (mulai 0).
 /// `LODO_LOOPBACK` mengganti alamat pertama, untuk pengujian tanpa admin.
@@ -28,19 +41,31 @@ pub fn loopback(n: usize) -> Option<Ipv4Addr> {
     (last < 255).then(|| Ipv4Addr::new(a, b, c, last as u8))
 }
 
-type Routes = Arc<RwLock<HashMap<SocketAddr, SocketAddr>>>;
+type TlsConfig = Option<Arc<rustls::ServerConfig>>;
+
+#[derive(Default)]
+struct Shared {
+    routes: HashMap<SocketAddr, (SocketAddr, bool)>,
+    tls: TlsConfig,
+}
 
 #[derive(Default)]
 pub struct Forwarder {
     listeners: HashMap<SocketAddr, Arc<AtomicBool>>,
-    routes: Routes,
+    shared: Arc<RwLock<Shared>>,
 }
 
 impl Forwarder {
-    /// Terapkan daftar penerusan: alamat dengar -> tujuan (None = server
-    /// sedang tidak terjangkau; koneksi ditolak).
-    pub fn apply(&mut self, desired: &HashMap<SocketAddr, Option<SocketAddr>>) {
-        *self.routes.write().unwrap() = desired.iter().filter_map(|(l, t)| Some((*l, (*t)?))).collect();
+    /// Terapkan daftar penerusan. `tls` dipakai untuk alamat bermode TLS;
+    /// tanpa `tls`, alamat itu tidak dibuka.
+    pub fn apply(&mut self, desired: &HashMap<SocketAddr, Target>, tls: TlsConfig) {
+        let desired: HashMap<SocketAddr, Target> =
+            desired.iter().filter(|(_, t)| !t.tls || tls.is_some()).map(|(a, t)| (*a, *t)).collect();
+        {
+            let mut sh = self.shared.write().unwrap();
+            sh.routes = desired.iter().filter_map(|(l, t)| Some((*l, (t.to?, t.tls)))).collect();
+            sh.tls = tls;
+        }
 
         // Tutup yang tidak dipakai lagi.
         self.listeners.retain(|addr, stop| {
@@ -61,9 +86,9 @@ impl Forwarder {
                 Ok(l) => {
                     let stop = Arc::new(AtomicBool::new(false));
                     self.listeners.insert(*addr, stop.clone());
-                    let routes = self.routes.clone();
+                    let shared = self.shared.clone();
                     let addr = *addr;
-                    thread::spawn(move || serve(l, addr, routes, stop));
+                    thread::spawn(move || serve(l, addr, shared, stop));
                 }
                 Err(e) => eprintln!("lodo-helper: tidak bisa membuka {addr}: {e}"),
             }
@@ -97,18 +122,127 @@ pub fn remove_loopback_aliases() {
     }
 }
 
-fn serve(listener: TcpListener, addr: SocketAddr, routes: Routes, stop: Arc<AtomicBool>) {
+fn serve(listener: TcpListener, addr: SocketAddr, shared: Arc<RwLock<Shared>>, stop: Arc<AtomicBool>) {
     for conn in listener.incoming() {
         if stop.load(Ordering::SeqCst) {
             return;
         }
         let Ok(client) = conn else { continue };
-        let target = routes.read().unwrap().get(&addr).copied();
-        if let Some(target) = target {
-            thread::spawn(move || pipe(client, target));
+        let (route, tls) = {
+            let sh = shared.read().unwrap();
+            (sh.routes.get(&addr).copied(), sh.tls.clone())
+        };
+        match route {
+            Some((target, false)) => {
+                thread::spawn(move || pipe(client, target));
+            }
+            Some((target, true)) => {
+                if let Some(cfg) = tls {
+                    thread::spawn(move || {
+                        if let Err(e) = pipe_tls(client, target, cfg) {
+                            eprintln!("lodo-helper: koneksi HTTPS: {e}");
+                        }
+                    });
+                }
+            }
+            // Tanpa tujuan: `client` ditutup, aplikasi langsung tahu gagal.
+            None => {}
         }
-        // Tanpa tujuan: `client` ditutup, aplikasi langsung tahu gagal.
     }
+}
+
+/// HTTPS lokal: selesaikan handshake TLS dengan klien, lalu teruskan isinya
+/// (HTTP biasa) ke server. Dua thread berbagi satu sesi TLS lewat mutex;
+/// pembacaan socket yang memblok terjadi di luar kunci.
+fn pipe_tls(client: TcpStream, target: SocketAddr, cfg: Arc<rustls::ServerConfig>) -> io::Result<()> {
+    let mut conn = rustls::ServerConnection::new(cfg).map_err(io::Error::other)?;
+    let mut sock = client;
+    let _ = sock.set_nodelay(true);
+    sock.set_read_timeout(Some(HANDSHAKE_TIMEOUT))?;
+    while conn.is_handshaking() {
+        conn.complete_io(&mut sock)?;
+    }
+    sock.set_read_timeout(None)?;
+
+    let server = TcpStream::connect_timeout(&target, CONNECT_TIMEOUT)?;
+    let _ = server.set_nodelay(true);
+    let conn = Arc::new(Mutex::new(conn));
+
+    // Server -> klien: tulis teks biasa ke sesi TLS, kirim rekaman terenkripsi.
+    let down = {
+        let conn = conn.clone();
+        let mut from = server.try_clone()?;
+        let mut to = sock.try_clone()?;
+        thread::spawn(move || {
+            let mut buf = vec![0u8; 16 * 1024];
+            loop {
+                let n = from.read(&mut buf).unwrap_or(0);
+                let mut c = conn.lock().unwrap();
+                if n == 0 {
+                    c.send_close_notify();
+                } else if c.writer().write_all(&buf[..n]).is_err() {
+                    break;
+                }
+                while c.wants_write() {
+                    if c.write_tls(&mut to).is_err() {
+                        return;
+                    }
+                }
+                if n == 0 {
+                    break;
+                }
+            }
+            let _ = to.shutdown(Shutdown::Write);
+        })
+    };
+
+    // Klien -> server: buka rekaman TLS, teruskan teks biasanya.
+    let mut from = sock.try_clone()?;
+    let mut to_client = sock;
+    let mut to_server = server;
+    let mut buf = vec![0u8; 16 * 1024];
+    'outer: loop {
+        let n = from.read(&mut buf).unwrap_or(0);
+        if n == 0 {
+            break;
+        }
+        let mut plain = Vec::new();
+        let mut closed = false;
+        {
+            let mut c = conn.lock().unwrap();
+            let mut rd = &buf[..n];
+            while !rd.is_empty() {
+                if c.read_tls(&mut rd).is_err() {
+                    break 'outer;
+                }
+                if c.process_new_packets().is_err() {
+                    while c.wants_write() {
+                        let _ = c.write_tls(&mut to_client); // kirim alert ke klien
+                    }
+                    break 'outer;
+                }
+                match c.reader().read_to_end(&mut plain) {
+                    Ok(_) => closed = true, // close_notify dari klien
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                    Err(_) => break 'outer,
+                }
+            }
+            while c.wants_write() {
+                if c.write_tls(&mut to_client).is_err() {
+                    break 'outer;
+                }
+            }
+        }
+        if !plain.is_empty() && to_server.write_all(&plain).is_err() {
+            break;
+        }
+        if closed {
+            break;
+        }
+    }
+    let _ = to_server.shutdown(Shutdown::Write);
+    let _ = down.join();
+    Ok(())
 }
 
 fn pipe(client: TcpStream, target: SocketAddr) {
@@ -169,13 +303,14 @@ mod tests {
             s
         };
 
-        f.apply(&HashMap::from([(free, Some(home))]));
+        let plain = |to| HashMap::from([(free, Target { to, tls: false })]);
+        f.apply(&plain(Some(home)), None);
         assert_eq!(ask(), "home:hello");
-        f.apply(&HashMap::from([(free, Some(vpn))]));
+        f.apply(&plain(Some(vpn)), None);
         assert_eq!(ask(), "vpn::hello");
-        f.apply(&HashMap::from([(free, None)]));
+        f.apply(&plain(None), None);
         assert_eq!(ask(), "");
-        f.apply(&HashMap::new());
+        f.apply(&HashMap::new(), None);
         thread::sleep(Duration::from_millis(100));
         assert!(TcpStream::connect(free).is_err());
     }

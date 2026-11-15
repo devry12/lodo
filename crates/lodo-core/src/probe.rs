@@ -59,6 +59,7 @@ mod tests {
             aliases: vec![],
             web_port: None,
             extra_ports: vec![],
+            https: true,
         }
     }
 

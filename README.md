@@ -18,6 +18,7 @@ Tidak perlu ganti remote git, config ssh, atau bookmark lagi tiap pindah tempat.
    - **IP di rumah**: mis. `192.168.1.10`
    - **IP lewat VPN**: pilih dari daftar Netbird/Tailscale (terdeteksi otomatis), atau klik **+ Isi manual**
    - **Port web** (boleh kosong): kalau aplikasi webnya jalan di port lain, mis. Gitea di `3002`, isi `3002`. Setelah itu cukup buka `http://git.home.arpa` tanpa `:3002`, atau klik **Buka**.
+     Centang **HTTPS juga** (aktif secara default) supaya `https://git.home.arpa` juga bisa dibuka. Pertama kali, klik **Aktifkan HTTPS** di layar utama lalu masukkan password. Ini cuma sekali.
    - Klik **Tes koneksi** untuk melihat jalur mana yang bisa dipakai sekarang.
 4. Selesai. Pakai alamatnya di mana saja:
    ```bash
@@ -53,6 +54,10 @@ lodo (tray, ~14 MB)  ──►  lodo-helper (service admin, ~1 MB)  ──►  f
   ```
   Baris lain di file hosts tidak pernah disentuh. Backup asli disimpan sebagai `hosts.lodo-backup`.
 - **Port web**: file hosts tidak bisa memetakan port. Jadi server yang punya port web diberi alamat loopback sendiri (`127.77.0.2`, `127.77.0.3`, …). Nama lodo mengarah ke alamat itu, dan helper meneruskan koneksi TCP ke IP yang sedang dipilih: port 80 ke port web, plus port web itu sendiri, port tes (mis. 22), dan **Port lain** di bagian Lanjutan. Port yang tidak terdaftar tidak diteruskan. Di macOS helper menambah alias `lo0` untuk alamat itu.
+- **HTTPS lokal**: sertifikat publik tidak bisa dibuat untuk `home.arpa`. Jadi helper membuat **CA lokal** sendiri di tiap komputer (`ca.pem` + `ca-key.pem` di folder data helper; kuncinya hanya bisa dibaca root/admin). Di port 443 helper menangani TLS dengan sertifikat untuk semua nama yang memakai HTTPS (berlaku 90 hari, diperbarui otomatis), lalu meneruskan isinya ke port web di server.
+  - CA diberi **name constraints**: hanya boleh menandatangani nama di bawah `home.arpa`, `internal`, `lan`, `home`, `test`, `intranet`, `private`, `corp`, dan `localhost`. Kalaupun kunci CA dicuri, tetap tidak bisa dipakai memalsukan situs internet.
+  - Mendaftarkan CA: di macOS app memasangnya ke keychain pengguna (dialog password macOS, karena macOS melarang perubahan trust tanpa persetujuan pengguna). Di Windows (`certutil`, Root) dan Linux (`update-ca-certificates` / `update-ca-trust`), helper memasangnya sendiri.
+  - Hanya komputer yang terpasang lodo yang mempercayai sertifikat ini. `git` atau `curl` dari Homebrew dan Firefox di Linux memakai daftar CA sendiri. **Hapus lodo** juga menghapus CA ini.
 - Service: launchd (macOS), systemd (Linux), Task Scheduler sebagai SYSTEM (Windows).
 - App dan helper bicara lewat `127.0.0.1:47811`. Helper memvalidasi setiap config, jadi nama yang bisa diatur hanya nama di bawah akhiran domain pribadi.
 - **Hapus lodo** (di Pengaturan) melepas service dan membersihkan blok lodo dari file hosts.

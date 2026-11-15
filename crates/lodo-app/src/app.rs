@@ -47,6 +47,7 @@ struct Editor {
     aliases: String,
     web_port: String,
     extra_ports: String,
+    https: bool,
     advanced: bool,
     error: Option<String>,
     peers: Option<Vec<Peer>>,
@@ -67,6 +68,7 @@ pub struct App {
     message: Option<(bool, String)>,
     install_task: Option<Task<Result<(), String>>>,
     uninstall_task: Option<Task<Result<(), String>>>,
+    trust_task: Option<Task<Result<(), String>>>,
     confirm_delete: Option<usize>,
     autostart: bool,
     auto_update: bool,
@@ -113,6 +115,7 @@ impl App {
             message: None,
             install_task: None,
             uninstall_task: None,
+            trust_task: None,
             confirm_delete: None,
             autostart: shared::autolaunch().and_then(|a| a.is_enabled().ok()).unwrap_or(false),
             auto_update: updater::auto_update(),
@@ -175,6 +178,16 @@ impl eframe::App for App {
                     if self.config.as_ref().is_some_and(|c| c.servers.is_empty()) {
                         self.screen = Screen::Edit(Box::new(Editor::new(&ctx, None, None)));
                     }
+                }
+                Err(e) => self.message = Some((true, e)),
+            }
+        }
+        if let Some(r) = take(&self.trust_task) {
+            self.trust_task = None;
+            match r {
+                Ok(()) => {
+                    self.live.lock().unwrap().https_trusted = Some(true);
+                    self.message = Some((false, "HTTPS aktif. Buka alamatnya dengan https://".into()));
                 }
                 Err(e) => self.message = Some((true, e)),
             }
@@ -299,6 +312,29 @@ impl App {
             });
         }
 
+        // HTTPS lokal butuh CA lodo dipercaya sistem (izin admin sekali).
+        let https_trusted = self.live.lock().unwrap().https_trusted;
+        let wants_https = config.servers.iter().any(|s| s.https_target().is_some());
+        if wants_https && https_trusted == Some(false) {
+            card(ui, |ui| {
+                ui.label(RichText::new("Aktifkan HTTPS").strong());
+                ui.label(
+                    RichText::new(
+                        "Supaya https:// di alamat lodo dipercaya browser. lodo memasang sertifikat yang hanya berlaku untuk alamat pribadimu, bukan situs internet.",
+                    )
+                    .weak(),
+                );
+                if self.trust_task.is_some() {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("Menunggu izin admin…");
+                    });
+                } else if ui.button("Aktifkan (perlu izin admin)").clicked() {
+                    self.trust_task = Some(spawn_task(&ctx, helper::trust_ca));
+                }
+            });
+        }
+
         let mut delete: Option<usize> = None;
         for (i, s) in config.servers.iter().enumerate() {
             let fqdn = s.fqdn(&config.domain);
@@ -333,10 +369,11 @@ impl App {
                             if ui.button("Ubah").clicked() {
                                 next = Screen::Edit(Box::new(Editor::new(&ctx, Some(i), Some(s))));
                             }
+                            let scheme = if s.https_target().is_some() && https_trusted == Some(true) { "https" } else { "http" };
                             if s.web_port.is_some_and(|p| p != 0)
-                                && ui.button("Buka").on_hover_text(format!("Buka http://{fqdn} di browser")).clicked()
+                                && ui.button("Buka").on_hover_text(format!("Buka {scheme}://{fqdn} di browser")).clicked()
                             {
-                                ctx.open_url(egui::OpenUrl::new_tab(format!("http://{fqdn}")));
+                                ctx.open_url(egui::OpenUrl::new_tab(format!("{scheme}://{fqdn}")));
                             }
                             if ui.button("Salin").on_hover_text("Salin alamat").clicked() {
                                 ctx.copy_text(fqdn.clone());
@@ -482,6 +519,9 @@ impl App {
                     _ => "Isi kalau aplikasi webnya jalan di port selain 80, supaya tidak perlu mengetik :port.".into(),
                 };
                 ui.label(RichText::new(hint).weak());
+                if matches!(ed.web_port.trim().parse::<u16>(), Ok(p) if p != 80 && p != 0) {
+                    ui.checkbox(&mut ed.https, format!("HTTPS juga: https://{host}.{}", config.domain));
+                }
             });
             ui.end_row();
         });
@@ -716,6 +756,7 @@ impl Editor {
             port: s.as_ref().map(|s| s.port).unwrap_or(lodo_core::model::DEFAULT_PORT).to_string(),
             aliases: s.as_ref().map(|s| s.aliases.join(", ")).unwrap_or_default(),
             web_port: s.as_ref().and_then(|s| s.web_port).map(|p| p.to_string()).unwrap_or_default(),
+            https: s.as_ref().is_none_or(|s| s.https),
             extra_ports: s.as_ref().map(|s| s.extra_ports.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", ")).unwrap_or_default(),
             advanced: false,
             error: None,
@@ -743,6 +784,7 @@ impl Editor {
             aliases: self.aliases.split(',').map(|a| a.trim().to_ascii_lowercase()).filter(|a| !a.is_empty()).collect(),
             // Isian tidak valid jadi 0 supaya ditolak validasi dengan pesan yang jelas.
             web_port: Some(self.web_port.trim()).filter(|p| !p.is_empty()).map(|p| p.parse().unwrap_or(0)),
+            https: self.https,
             extra_ports: self
                 .extra_ports
                 .split([',', ' '])
