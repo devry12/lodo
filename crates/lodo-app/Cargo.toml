@@ -27,3 +27,4 @@ binaries-dir = "../../target/release"
 out-dir = "../../dist"
 binaries = [{ path = "lodo", main = true }, { path = "lodo-helper", main = false }]
 formats = ["app", "dmg", "nsis", "deb", "appimage"]
+icons = ["icons/icon-32.png", "icons/icon-128.png", "icons/icon-256.png", "icons/icon-512.png"]
