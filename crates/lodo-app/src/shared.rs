@@ -15,10 +15,27 @@ pub const WINDOW_LOCK: &str = "127.0.0.1:47813";
 
 /// Ketuk instance yang sudah jalan (minta buka / fokus jendela).
 pub fn poke(addr: &str) {
+    send_line(addr, "open");
+}
+
+/// Kirim satu perintah ke instance yang sudah jalan ("open" atau "update").
+pub fn send_line(addr: &str, cmd: &str) -> bool {
     let addr: SocketAddr = addr.parse().unwrap();
-    if let Ok(mut s) = TcpStream::connect_timeout(&addr, Duration::from_millis(300)) {
-        let _ = s.write_all(b"open\n");
+    match TcpStream::connect_timeout(&addr, Duration::from_millis(300)) {
+        Ok(mut s) => s.write_all(format!("{cmd}\n").as_bytes()).is_ok(),
+        Err(_) => false,
     }
+}
+
+/// Buka alamat web di browser bawaan.
+pub fn open_url(url: &str) {
+    let _ = if cfg!(target_os = "macos") {
+        std::process::Command::new("/usr/bin/open").arg(url).spawn()
+    } else if cfg!(windows) {
+        std::process::Command::new("explorer.exe").arg(url).spawn()
+    } else {
+        std::process::Command::new("xdg-open").arg(url).spawn()
+    };
 }
 
 /// Status terbaru dari helper, diperbarui thread pemantau.

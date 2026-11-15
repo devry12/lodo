@@ -26,6 +26,8 @@ pub enum Request {
     SetConfig(Config),
     Status,
     Recheck,
+    /// Minta helper memeriksa dan memasang pembaruannya sendiri sekarang.
+    Update,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,6 +1,8 @@
 use crate::helper;
 use crate::shared::{self, Live};
 use crate::tray::Mood;
+use crate::updater;
+use lodo_core::update::Manifest;
 use eframe::egui::{self, Color32, RichText, ViewportCommand};
 use lodo_core::peers::{self, Peer};
 use lodo_core::{domain, probe, Config, Route, Server, ServerStatus, VpnTarget};
@@ -67,6 +69,11 @@ pub struct App {
     uninstall_task: Option<Task<Result<(), String>>>,
     confirm_delete: Option<usize>,
     autostart: bool,
+    auto_update: bool,
+    update_task: Option<Task<Result<Option<Manifest>, String>>>,
+    update_result: Option<Result<Option<Manifest>, String>>,
+    updating: bool,
+    helper_update_asked: bool,
 }
 
 impl App {
@@ -108,6 +115,11 @@ impl App {
             uninstall_task: None,
             confirm_delete: None,
             autostart: shared::autolaunch().and_then(|a| a.is_enabled().ok()).unwrap_or(false),
+            auto_update: updater::auto_update(),
+            update_task: None,
+            update_result: None,
+            updating: false,
+            helper_update_asked: false,
         }
     }
 
@@ -167,6 +179,10 @@ impl eframe::App for App {
                 Err(e) => self.message = Some((true, e)),
             }
         }
+        if let Some(r) = take(&self.update_task) {
+            self.update_task = None;
+            self.update_result = Some(r);
+        }
         if let Some(r) = take(&self.uninstall_task) {
             self.uninstall_task = None;
             match r {
@@ -199,9 +215,15 @@ impl eframe::App for App {
                 match helper_version {
                     None => self.setup_screen(ui),
                     Some(v) => {
+                        if lodo_core::update::is_newer(APP_VERSION, &v) && !self.helper_update_asked {
+                            // Helper bisa memperbarui dirinya tanpa izin admin.
+                            self.helper_update_asked = true;
+                            thread::spawn(helper::request_update);
+                        }
                         if v != APP_VERSION && self.install_task.is_none() {
                             card(ui, |ui| {
                                 ui.label("Helper lodo perlu diperbarui ke versi baru.");
+                                ui.label(RichText::new("Biasanya diperbarui otomatis dalam semenit. Kalau tidak, klik tombol di bawah.").weak());
                                 if ui.button("Perbarui (perlu izin admin)").clicked() {
                                     self.install_task = Some(spawn_task(&ctx, helper::install));
                                 }
@@ -596,6 +618,54 @@ impl App {
                 self.set_autostart(on);
             }
             ui.label(RichText::new("Pergantian alamat tetap berjalan walau aplikasi ini ditutup.").weak());
+        });
+
+        card(ui, |ui| {
+            ui.label(RichText::new("Pembaruan").strong());
+            let mut on = self.auto_update;
+            if ui.checkbox(&mut on, "Perbarui otomatis").changed() {
+                match updater::set_auto_update(on) {
+                    Ok(()) => self.auto_update = on,
+                    Err(e) => self.message = Some((true, e)),
+                }
+            }
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(format!("Versi {APP_VERSION}.")).weak());
+                if self.updating {
+                    ui.spinner();
+                    ui.label("Memperbarui… lodo akan terbuka lagi sebentar.");
+                } else if self.update_task.is_some() {
+                    ui.spinner();
+                    ui.label("Memeriksa…");
+                } else {
+                    match &self.update_result {
+                        Some(Ok(Some(m))) => {
+                            ui.label(RichText::new(format!("Versi {} tersedia.", m.version)).color(Color32::from_rgb(40, 160, 80)));
+                            if updater::can_self_install() {
+                                if ui.button("Perbarui sekarang").clicked() {
+                                    if shared::send_line(shared::TRAY_LOCK, "update") {
+                                        self.updating = true;
+                                    } else {
+                                        self.message = Some((true, "Ikon lodo di menu bar tidak berjalan. Buka lodo lagi lalu coba ulang.".into()));
+                                    }
+                                }
+                            } else if ui.button("Buka halaman unduhan").clicked() {
+                                ctx.open_url(egui::OpenUrl::new_tab(updater::download_page()));
+                            }
+                        }
+                        Some(Ok(None)) => {
+                            ui.label("Sudah versi terbaru.");
+                        }
+                        Some(Err(e)) => {
+                            ui.label(RichText::new(e.as_str()).color(Color32::from_rgb(220, 60, 50)));
+                        }
+                        None => {}
+                    }
+                    if !matches!(self.update_result, Some(Ok(Some(_)))) && ui.button("Cek pembaruan").clicked() {
+                        self.update_task = Some(spawn_task(&ctx, updater::check));
+                    }
+                }
+            });
         });
 
         card(ui, |ui| {

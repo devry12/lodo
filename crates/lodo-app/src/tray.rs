@@ -57,6 +57,7 @@ pub struct Tray {
     pub status_item: MenuItem,
     pub open_id: MenuId,
     pub recheck_id: MenuId,
+    pub update_item: MenuItem,
     pub quit_id: MenuId,
     mood: Mood,
 }
@@ -66,6 +67,7 @@ impl Tray {
         let status_item = MenuItem::new(Mood::Idle.label(), false, None);
         let open = MenuItem::new("Buka lodo", true, None);
         let recheck = MenuItem::new("Cek ulang sekarang", true, None);
+        let update_item = MenuItem::new("Cek pembaruan", true, None);
         let quit = MenuItem::new("Keluar", true, None);
         let menu = Menu::new();
         menu.append_items(&[
@@ -73,6 +75,7 @@ impl Tray {
             &PredefinedMenuItem::separator(),
             &open,
             &recheck,
+            &update_item,
             &PredefinedMenuItem::separator(),
             &quit,
         ])
@@ -88,6 +91,7 @@ impl Tray {
             status_item,
             open_id: open.id().clone(),
             recheck_id: recheck.id().clone(),
+            update_item,
             quit_id: quit.id().clone(),
             mood: Mood::Idle,
         })

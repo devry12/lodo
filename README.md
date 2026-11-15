@@ -11,7 +11,7 @@ Tidak perlu ganti remote git, config ssh, atau bookmark lagi tiap pindah tempat.
 
 ## Cara pakai (untuk semua orang)
 
-1. Install: buka `.dmg` (Mac), `-setup.exe` (Windows), atau `.deb` / `.AppImage` (Linux).
+1. Unduh di **https://lodo.kreasimaju.id**, lalu buka `.dmg` (Mac), `-setup.exe` (Windows), atau `.AppImage` / `.deb` (Linux). Setelah itu lodo memperbarui dirinya sendiri.
 2. Buka **lodo**, klik **Mulai**, lalu masukkan password admin. Ini cuma sekali.
 3. Klik **+ Tambah server**:
    - **Nama**: mis. `git`, jadi alamatnya `git.home.arpa`
@@ -57,6 +57,38 @@ lodo (tray, ~14 MB)  ──►  lodo-helper (service admin, ~1 MB)  ──►  f
 - App dan helper bicara lewat `127.0.0.1:47811`. Helper memvalidasi setiap config, jadi nama yang bisa diatur hanya nama di bawah akhiran domain pribadi.
 - **Hapus lodo** (di Pengaturan) melepas service dan membersihkan blok lodo dari file hosts.
 
+## Pembaruan otomatis
+
+Rilis dihosting di **https://lodo.kreasimaju.id** (Cloudflare Worker + R2, kode di `worker/`).
+
+- **App** (proses tray) memeriksa pembaruan 15 detik setelah mulai lalu tiap 6 jam. Kalau ada versi baru, lodo mengunduh, memasang, dan membuka ulang dirinya. Bisa dimatikan di **Pengaturan → Perbarui otomatis**, atau diperbarui manual lewat menu tray **Cek pembaruan**.
+  - macOS: mengganti `lodo.app` di tempatnya. Windows: menjalankan installer secara diam (`/S`). Linux: mengganti file AppImage. Versi `.deb` diarahkan ke halaman unduhan.
+- **Helper** memperbarui dirinya sendiri (sudah berhak admin, jadi tanpa password): 1 menit setelah mulai, tiap 6 jam, dan saat app baru selesai diperbarui.
+- **Keamanan**: `latest.json` ditandatangani dengan kunci ed25519. Kunci publiknya tertanam di `crates/lodo-core/src/update.rs`. Setiap file dicek SHA-256-nya sebelum dipasang, dan versi lama tidak pernah dipasang ulang. Jadi walau server atau R2 diambil alih, file palsu ditolak.
+
+| Alamat | Isi |
+|---|---|
+| `/` | halaman unduhan |
+| `/latest.json`, `/latest.json.sig` | manifest + tanda tangan |
+| `/releases/<versi>/<file>` | file rilis |
+| `/download/mac`, `/windows`, `/linux`, `/deb` | file terbaru untuk OS itu |
+
+### Menerbitkan rilis
+
+1. Naikkan `version` di semua `crates/*/Cargo.toml`.
+2. **Lewat CI**: push tag `v0.3.1`. CI membuat installer untuk ketiga OS lalu menerbitkannya. Butuh secret `LODO_SIGNING_KEY` (isi `~/.config/lodo/signing.key`), `CLOUDFLARE_API_TOKEN` (izin R2 edit), dan `CLOUDFLARE_ACCOUNT_ID`.
+3. **Manual dari Mac** (hanya macOS):
+   ```bash
+   cd crates/lodo-app && cargo packager --release --formats app,dmg && cd ../..
+   ```
+   ```bash
+   scripts/collect.sh release && scripts/publish.sh release 0.3.1 "catatan rilis"
+   ```
+
+Kunci rahasia ada di `~/.config/lodo/signing.key`. **Backup kunci ini.** Kalau hilang, versi yang sudah terpasang tidak bisa menerima pembaruan lagi. Deploy ulang Worker: `cd worker && npx wrangler@4 deploy`.
+
+Untuk pengujian: `LODO_UPDATE_URL=http://127.0.0.1:8799` mengganti server rilis, `LODO_NO_RELAUNCH=1` mencegah lodo membuka ulang dirinya, `lodo --update` dan `lodo-helper update` memperbarui dari terminal.
+
 ## Struktur project
 
 | Crate | Isi |
@@ -64,6 +96,8 @@ lodo (tray, ~14 MB)  ──►  lodo-helper (service admin, ~1 MB)  ──►  f
 | `crates/lodo-core` | validasi domain, editor file hosts, tes koneksi, deteksi peer Netbird/Tailscale, protokol IPC |
 | `crates/lodo-helper` | service berhak admin (`run`, `install`, `uninstall`) |
 | `crates/lodo-app` | tray (winit + tray-icon) dan jendela (egui), pure Rust tanpa webview |
+| `crates/lodo-release` | alat rilis: buat kunci, tulis dan tanda tangani `latest.json` |
+| `worker/` | Cloudflare Worker: halaman unduhan + file rilis dari R2 |
 
 ## Pengembangan
 
@@ -87,7 +121,7 @@ cargo run -p lodo-app --bin lodo
 Buat installer (perlu `cargo install cargo-packager --locked`):
 
 ```bash
-cd crates/lodo-app && cargo packager --release
+cd crates/lodo-app && cargo packager --release --formats app,dmg   # Windows: nsis, Linux: deb,appimage
 ```
 
 Hasilnya ada di `dist/`. GitHub Actions (`.github/workflows/release.yml`) membuat installer untuk macOS, Windows, dan Linux.

@@ -36,6 +36,11 @@ pub fn set_config(c: &Config) -> Result<(), String> {
     }
 }
 
+/// Minta helper memperbarui dirinya (tanpa izin admin; helper sudah berhak admin).
+pub fn request_update() {
+    let _ = ipc::send(&Request::Update);
+}
+
 pub fn recheck() {
     let _ = ipc::send(&Request::Recheck);
 }

@@ -4,11 +4,14 @@
 use crate::shared::{self, Live, TRAY_LOCK, WINDOW_LOCK};
 use crate::tray::Tray;
 use crate::helper;
+use crate::updater;
+use lodo_core::update::Manifest;
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
 use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 use tray_icon::menu::{MenuEvent, MenuId};
 use winit::application::ApplicationHandler;
 use winit::event::{StartCause, WindowEvent};
@@ -19,13 +22,26 @@ enum Ev {
     Menu(MenuId),
     Open,
     Refresh,
+    /// Versi baru tersedia tapi tidak dipasang otomatis.
+    UpdateAvailable(String),
+    /// Pasang pembaruan sekarang (true = buka jendela setelah dibuka ulang).
+    UpdateNow(bool),
+    UpdateFailed(String),
+    /// Pembaruan terpasang: keluar supaya versi baru bisa jalan.
+    Restart(String),
 }
+
+const UPDATE_FIRST: Duration = Duration::from_secs(15);
+const UPDATE_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 
 struct TrayApp {
     tray: Option<Tray>,
     live: Arc<Mutex<Live>>,
     window: Option<Child>,
     open_on_start: bool,
+    proxy: winit::event_loop::EventLoopProxy<Ev>,
+    pending: Arc<Mutex<Option<Manifest>>>,
+    updating: bool,
 }
 
 pub fn run(open_window: bool) {
@@ -51,7 +67,8 @@ pub fn run(open_window: bool) {
             for conn in listener.incoming().flatten() {
                 let mut line = String::new();
                 let _ = BufReader::new(conn).read_line(&mut line);
-                let _ = proxy.send_event(Ev::Open);
+                let ev = if line.trim() == "update" { Ev::UpdateNow(true) } else { Ev::Open };
+                let _ = proxy.send_event(ev);
             }
         });
     }
@@ -78,18 +95,99 @@ pub fn run(open_window: bool) {
     }
 
     let live = Arc::new(Mutex::new(Live::default()));
-    shared::spawn_poller(live.clone(), move |changes| {
-        if !changes.is_empty() {
-            let _ = notify_rust::Notification::new().summary("lodo").body(&changes.join("\n")).show();
-        }
-        let _ = proxy.send_event(Ev::Refresh);
-    });
+    {
+        let proxy = proxy.clone();
+        shared::spawn_poller(live.clone(), move |changes| {
+            if !changes.is_empty() {
+                notify(&changes.join("\n"));
+            }
+            let _ = proxy.send_event(Ev::Refresh);
+        });
+    }
 
-    let mut app = TrayApp { tray: None, live, window: None, open_on_start: open_window };
+    let pending = Arc::new(Mutex::new(None));
+    spawn_update_loop(proxy.clone(), pending.clone());
+
+    let mut app = TrayApp { tray: None, live, window: None, open_on_start: open_window, proxy, pending, updating: false };
     let _ = event_loop.run_app(&mut app);
 }
 
+fn notify(body: &str) {
+    let _ = notify_rust::Notification::new().summary("lodo").body(body).show();
+}
+
+/// Periksa pembaruan saat mulai lalu tiap 6 jam.
+fn spawn_update_loop(proxy: winit::event_loop::EventLoopProxy<Ev>, pending: Arc<Mutex<Option<Manifest>>>) {
+    thread::spawn(move || {
+        thread::sleep(UPDATE_FIRST);
+        loop {
+            if let Ok(Some(m)) = updater::check() {
+                let version = m.version.clone();
+                *pending.lock().unwrap() = Some(m);
+                let ev = if updater::auto_update() && updater::can_self_install() {
+                    Ev::UpdateNow(false)
+                } else {
+                    Ev::UpdateAvailable(version)
+                };
+                let _ = proxy.send_event(ev);
+            }
+            thread::sleep(UPDATE_EVERY);
+        }
+    });
+}
+
 impl TrayApp {
+    fn start_update(&mut self, open_window: bool) {
+        if self.updating {
+            return;
+        }
+        if !updater::can_self_install() {
+            shared::open_url(&updater::download_page());
+            return;
+        }
+        self.updating = true;
+        if let Some(t) = &self.tray {
+            t.update_item.set_text("Memperbarui…");
+            t.update_item.set_enabled(false);
+        }
+        let proxy = self.proxy.clone();
+        let pending = self.pending.lock().unwrap().clone();
+        thread::spawn(move || {
+            let m = match pending {
+                Some(m) => Ok(Some(m)),
+                None => updater::check(),
+            };
+            let ev = match m {
+                Ok(Some(m)) => match updater::install(&m, open_window) {
+                    Ok(()) => Ev::Restart(m.version),
+                    Err(e) => Ev::UpdateFailed(e),
+                },
+                Ok(None) => Ev::UpdateFailed(String::new()),
+                Err(e) => Ev::UpdateFailed(e),
+            };
+            let _ = proxy.send_event(ev);
+        });
+    }
+
+    /// Klik "Cek pembaruan" di menu.
+    fn check_update_now(&mut self) {
+        if self.pending.lock().unwrap().is_some() {
+            self.start_update(false);
+            return;
+        }
+        let proxy = self.proxy.clone();
+        let pending = self.pending.clone();
+        thread::spawn(move || match updater::check() {
+            Ok(Some(m)) => {
+                let v = m.version.clone();
+                *pending.lock().unwrap() = Some(m);
+                let _ = proxy.send_event(Ev::UpdateAvailable(v));
+            }
+            Ok(None) => notify(&format!("lodo sudah versi terbaru ({}).", updater::VERSION)),
+            Err(e) => notify(&e),
+        });
+    }
+
     fn open_window(&mut self) {
         if let Some(child) = &mut self.window
             && matches!(child.try_wait(), Ok(None))
@@ -130,12 +228,42 @@ impl ApplicationHandler<Ev> for TrayApp {
         match ev {
             Ev::Open => self.open_window(),
             Ev::Refresh => self.refresh(),
+            Ev::UpdateAvailable(v) => {
+                if let Some(t) = &self.tray {
+                    t.update_item.set_text(format!("Perbarui ke versi {v}"));
+                }
+                notify(&format!("lodo versi {v} tersedia. Klik \"Perbarui\" di menu lodo."));
+            }
+            Ev::UpdateNow(open_window) => self.start_update(open_window),
+            Ev::UpdateFailed(e) => {
+                self.updating = false;
+                if let Some(t) = &self.tray {
+                    t.update_item.set_enabled(true);
+                    t.update_item.set_text("Cek pembaruan");
+                }
+                if e.is_empty() {
+                    notify(&format!("lodo sudah versi terbaru ({}).", updater::VERSION));
+                } else {
+                    notify(&format!("Pembaruan gagal: {e}"));
+                }
+            }
+            Ev::Restart(v) => {
+                notify(&format!("lodo diperbarui ke versi {v}."));
+                // Helper memperbarui dirinya sendiri (sudah berhak admin).
+                helper::request_update();
+                if let Some(c) = &mut self.window {
+                    let _ = c.kill();
+                }
+                el.exit();
+            }
             Ev::Menu(id) => {
                 let Some(t) = &self.tray else { return };
                 if id == t.open_id {
                     self.open_window();
                 } else if id == t.recheck_id {
                     thread::spawn(helper::recheck);
+                } else if id == *t.update_item.id() {
+                    self.check_update_now();
                 } else if id == t.quit_id {
                     if let Some(c) = &mut self.window {
                         let _ = c.kill();

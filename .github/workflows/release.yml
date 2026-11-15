@@ -21,9 +21,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
-          - os: windows-latest
-          - os: ubuntu-22.04
+          - os: macos-latest   # darwin-aarch64
+            formats: app,dmg
+          - os: windows-latest # windows-x86_64
+            formats: nsis
+          - os: ubuntu-22.04   # linux-x86_64
+            formats: deb,appimage
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -31,13 +34,33 @@ jobs:
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libgl1-mesa-dev libdbus-1-dev
       - run: cargo install cargo-packager --locked
-      - run: cargo packager --release
+      - run: cargo packager --release --formats ${{ matrix.formats }}
         working-directory: crates/lodo-app
+      - run: scripts/collect.sh release
+        shell: bash
       - uses: actions/upload-artifact@v4
         with:
           name: lodo-${{ matrix.os }}
-          path: |
-            dist/*.dmg
-            dist/*-setup.exe
-            dist/*.deb
-            dist/*.AppImage
+          path: release/*
+
+  # Tag v* -> tanda tangani dan terbitkan ke https://lodo.kreasimaju.id
+  # Secret yang dibutuhkan: LODO_SIGNING_KEY, CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - run: scripts/publish.sh release "${GITHUB_REF_NAME}" "Rilis ${GITHUB_REF_NAME}"
+        env:
+          LODO_SIGNING_KEY: ${{ secrets.LODO_SIGNING_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/lodo-core", "crates/lodo-helper", "crates/lodo-app"]
+members = ["crates/lodo-core", "crates/lodo-helper", "crates/lodo-app", "crates/lodo-release"]
 
 [profile.release]
 opt-level = "s"

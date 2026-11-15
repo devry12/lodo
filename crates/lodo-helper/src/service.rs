@@ -6,7 +6,7 @@ use std::process::Command;
 
 pub const ID: &str = "id.lodo.helper";
 
-fn installed_path() -> PathBuf {
+pub fn installed_path() -> PathBuf {
     if cfg!(target_os = "macos") {
         PathBuf::from(format!("/Library/PrivilegedHelperTools/{ID}"))
     } else if cfg!(windows) {

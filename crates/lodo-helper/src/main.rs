@@ -4,10 +4,12 @@
 //!   lodo-helper run        jalan sebagai service (dipanggil launchd/systemd/Task Scheduler)
 //!   lodo-helper install    pasang helper sebagai service (butuh admin)
 //!   lodo-helper uninstall  hapus service + bersihkan hosts (butuh admin)
+//!   lodo-helper update     perbarui binary ini ke versi terbaru (tanpa restart)
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod forward;
 mod service;
+mod selfupdate;
 
 use lodo_core::ipc::{self, Request, Response};
 use lodo_core::{hosts, probe, serde_json, Config, Route, ServerStatus};
@@ -28,6 +30,7 @@ fn main() {
         "run" => run(),
         "install" => service::install(),
         "uninstall" => service::uninstall(),
+        "update" => selfupdate::update_cli(),
         "--version" => {
             println!("{}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -89,7 +92,19 @@ fn run() -> Result<(), String> {
     let state = Arc::new(Mutex::new(State { status: unknown_status(&config), config }));
     let (tx, rx) = mpsc::channel::<()>();
 
-    let listener = TcpListener::bind(ipc::addr()).map_err(|e| format!("Tidak bisa membuka {}: {e}", ipc::addr()))?;
+    // Coba beberapa kali: setelah pembaruan, proses lama mungkin belum melepas port.
+    let mut listener = TcpListener::bind(ipc::addr());
+    for _ in 0..40 {
+        if listener.is_ok() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(500));
+        listener = TcpListener::bind(ipc::addr());
+    }
+    let listener = listener.map_err(|e| format!("Tidak bisa membuka {}: {e}", ipc::addr()))?;
+
+    // Pembaruan otomatis helper (hanya untuk helper yang terpasang sebagai service).
+    let update_tx = selfupdate::spawn();
 
     // Pantau perubahan jaringan (ganti WiFi, VPN nyala/mati).
     {
@@ -104,7 +119,8 @@ fn run() -> Result<(), String> {
             for conn in listener.incoming().flatten() {
                 let state = state.clone();
                 let tx = tx.clone();
-                thread::spawn(move || handle(conn, &state, &tx));
+                let update_tx = update_tx.clone();
+                thread::spawn(move || handle(conn, &state, &tx, &update_tx));
             }
         });
     }
@@ -167,7 +183,7 @@ fn check_once(state: &Arc<Mutex<State>>, fwd: &mut forward::Forwarder) {
     }
 }
 
-fn handle(conn: std::net::TcpStream, state: &Arc<Mutex<State>>, tx: &Sender<()>) {
+fn handle(conn: std::net::TcpStream, state: &Arc<Mutex<State>>, tx: &Sender<()>, update_tx: &Sender<()>) {
     let Some(req) = ipc::read_request(&conn) else { return };
     let resp = match req {
         Request::Ping => Response::Pong { version: env!("CARGO_PKG_VERSION").into() },
@@ -175,6 +191,10 @@ fn handle(conn: std::net::TcpStream, state: &Arc<Mutex<State>>, tx: &Sender<()>)
         Request::Status => Response::Status(state.lock().unwrap().status.clone()),
         Request::Recheck => {
             let _ = tx.send(());
+            Response::Ok
+        }
+        Request::Update => {
+            let _ = update_tx.send(());
             Response::Ok
         }
         Request::SetConfig(mut c) => {

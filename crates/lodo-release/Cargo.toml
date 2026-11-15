@@ -1,0 +1,13 @@
+[package]
+name = "lodo-release"
+version = "0.3.0"
+edition = "2024"
+publish = false
+description = "Alat rilis: buat kunci, tulis dan tanda tangani latest.json"
+
+[dependencies]
+base64 = "0.23.1"
+ed25519-dalek = "3.0.0"
+getrandom = "0.4.3"
+lodo-core = { path = "../lodo-core" }
+serde_json = "1.0.154"
