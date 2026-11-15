@@ -4,7 +4,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub const BEGIN: &str = "# BEGIN lodo (dikelola otomatis oleh lodo, jangan diedit)";
+pub const BEGIN: &str = "# BEGIN lodo (managed automatically by lodo, do not edit)";
 pub const END: &str = "# END lodo";
 
 /// Lokasi file hosts. `LODO_HOSTS_FILE` bisa dipakai untuk pengujian.

@@ -27,10 +27,10 @@ impl Mood {
 
     pub fn label(self) -> &'static str {
         match self {
-            Mood::Home => "Di rumah",
-            Mood::Vpn => "Lewat VPN",
-            Mood::Down => "Ada server tak terjangkau",
-            Mood::Idle => "Belum ada server",
+            Mood::Home => "At home",
+            Mood::Vpn => "Via VPN",
+            Mood::Down => "A server is unreachable",
+            Mood::Idle => "No servers yet",
         }
     }
 }
@@ -65,10 +65,10 @@ pub struct Tray {
 impl Tray {
     pub fn new() -> Option<Self> {
         let status_item = MenuItem::new(Mood::Idle.label(), false, None);
-        let open = MenuItem::new("Buka lodo", true, None);
-        let recheck = MenuItem::new("Cek ulang sekarang", true, None);
-        let update_item = MenuItem::new("Cek pembaruan", true, None);
-        let quit = MenuItem::new("Keluar", true, None);
+        let open = MenuItem::new("Open lodo", true, None);
+        let recheck = MenuItem::new("Check again now", true, None);
+        let update_item = MenuItem::new("Check for updates", true, None);
+        let quit = MenuItem::new("Quit", true, None);
         let menu = Menu::new();
         menu.append_items(&[
             &status_item,

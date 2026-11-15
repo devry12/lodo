@@ -36,7 +36,7 @@ pub fn auto_update() -> bool {
 }
 
 pub fn set_auto_update(on: bool) -> Result<(), String> {
-    let p = prefs_path().ok_or("Folder pengaturan tidak ditemukan.")?;
+    let p = prefs_path().ok_or("Settings folder not found.")?;
     if let Some(d) = p.parent() {
         std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
     }
@@ -74,7 +74,7 @@ pub fn download_page() -> String {
 /// Unduh, cek, dan pasang versi `m`, lalu siapkan lodo dibuka ulang setelah
 /// proses ini keluar. Pemanggil harus segera keluar kalau berhasil.
 pub fn install(m: &Manifest, open_window: bool) -> Result<(), String> {
-    let asset = m.asset("app").ok_or("Belum ada versi baru untuk sistem ini.")?;
+    let asset = m.asset("app").ok_or("No new version for this system yet.")?;
     let dir = std::env::temp_dir().join(format!("lodo-update-{}", m.version));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -85,11 +85,11 @@ pub fn install(m: &Manifest, open_window: bool) -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 fn install_platform(archive: &Path, dir: &Path, open_window: bool) -> Result<(), String> {
-    let bundle = mac_bundle().ok_or("lodo tidak dijalankan dari lodo.app.")?;
+    let bundle = mac_bundle().ok_or("lodo isn't running from lodo.app.")?;
     run("/usr/bin/tar", &["-xzf", &archive.display().to_string(), "-C", &dir.display().to_string()])?;
     let new_app = dir.join("lodo.app");
     if !new_app.join("Contents/MacOS/lodo").exists() {
-        return Err("Isi pembaruan tidak lengkap.".into());
+        return Err("The update is incomplete.".into());
     }
     // Salin di sebelah bundle lama dulu, lalu tukar dengan rename (cepat dan aman).
     let staged = bundle.with_file_name(".lodo-new.app");
@@ -101,7 +101,7 @@ fn install_platform(archive: &Path, dir: &Path, open_window: bool) -> Result<(),
     std::fs::rename(&bundle, &old).map_err(|_| no_permission(&bundle))?;
     if let Err(e) = std::fs::rename(&staged, &bundle) {
         let _ = std::fs::rename(&old, &bundle);
-        return Err(format!("Gagal memasang versi baru: {e}"));
+        return Err(format!("Couldn't install the new version: {e}"));
     }
     let _ = std::fs::remove_dir_all(&old);
     let _ = std::fs::remove_dir_all(dir);
@@ -128,13 +128,13 @@ fn install_platform(setup: &Path, _dir: &Path, open_window: bool) -> Result<(), 
         .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
         .spawn()
         .map(|_| ())
-        .map_err(|e| format!("Gagal menjalankan pemasang: {e}"))
+        .map_err(|e| format!("Couldn't run the installer: {e}"))
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
 fn install_platform(file: &Path, _dir: &Path, open_window: bool) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
-    let target = PathBuf::from(std::env::var_os("APPIMAGE").ok_or("Versi .deb diperbarui lewat situs lodo.")?);
+    let target = PathBuf::from(std::env::var_os("APPIMAGE").ok_or("The .deb version is updated from the lodo website.")?);
     std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
     let staged = target.with_extension("new");
     std::fs::copy(file, &staged).map_err(|_| no_permission(&target))?;
@@ -144,7 +144,7 @@ fn install_platform(file: &Path, _dir: &Path, open_window: bool) -> Result<(), S
 }
 
 fn no_permission(p: &Path) -> String {
-    format!("Tidak punya izin mengganti {}. Unduh versi baru di {}.", p.display(), download_page())
+    format!("No permission to replace {}. Download the new version at {}.", p.display(), download_page())
 }
 
 #[cfg(unix)]

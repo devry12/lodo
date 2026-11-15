@@ -204,7 +204,7 @@ fn install_trust(pem: &Path) -> Result<(), String> {
         "/usr/bin/security",
         &["add-trusted-cert", "-d", "-r", "trustRoot", "-p", "ssl", "-k", SYSTEM_KEYCHAIN, &pem.display().to_string()],
     )
-    .map_err(|e| format!("Gagal mendaftarkan sertifikat lodo: {e}"))
+    .map_err(|e| format!("Couldn't trust the lodo certificate: {e}"))
 }
 
 #[cfg(target_os = "macos")]
@@ -221,7 +221,7 @@ fn remove_trust() {
 fn install_trust(pem: &Path) -> Result<(), String> {
     remove_trust();
     sh("certutil.exe", &["-f", "-addstore", "Root", &pem.display().to_string()])
-        .map_err(|e| format!("Gagal mendaftarkan sertifikat lodo: {e}"))
+        .map_err(|e| format!("Couldn't trust the lodo certificate: {e}"))
 }
 
 #[cfg(windows)]
@@ -246,10 +246,10 @@ fn install_trust(pem: &Path) -> Result<(), String> {
     for (dir, cmd, args) in LINUX_STORES {
         if Path::new(dir).is_dir() {
             std::fs::copy(pem, Path::new(dir).join("lodo-local-ca.crt")).map_err(|e| e.to_string())?;
-            return sh(cmd, args).map_err(|e| format!("Gagal mendaftarkan sertifikat lodo: {e}"));
+            return sh(cmd, args).map_err(|e| format!("Couldn't trust the lodo certificate: {e}"));
         }
     }
-    Err("Trust store sistem tidak dikenali.".into())
+    Err("Unrecognized system trust store.".into())
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -294,7 +294,7 @@ impl LeafCache {
                     self.names = names.to_vec();
                     self.made = Some(Instant::now());
                 }
-                Err(e) => eprintln!("lodo-helper: gagal membuat sertifikat HTTPS: {e}"),
+                Err(e) => eprintln!("lodo-helper: couldn't create the HTTPS certificate: {e}"),
             }
         }
         self.config.clone()

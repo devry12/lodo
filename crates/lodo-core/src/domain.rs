@@ -13,13 +13,13 @@ pub const SAFE_SUFFIXES: &[&str] = &[
 pub fn validate_suffix(domain: &str) -> Result<(), String> {
     let d = domain.trim().trim_end_matches('.').to_ascii_lowercase();
     if d.is_empty() {
-        return Err("Akhiran domain tidak boleh kosong.".into());
+        return Err("The address ending can't be empty.".into());
     }
     for label in d.split('.') {
         validate_label(label)?;
     }
     if d == "local" || d.ends_with(".local") {
-        return Err("\".local\" dipakai perangkat Apple/printer (Bonjour). Pilih yang lain, mis. home.arpa.".into());
+        return Err("\".local\" is used by Apple devices and printers (Bonjour). Pick another one, e.g. home.arpa.".into());
     }
     if SAFE_SUFFIXES.iter().any(|s| d == *s || d.ends_with(&format!(".{s}"))) {
         return Ok(());
@@ -28,12 +28,12 @@ pub fn validate_suffix(domain: &str) -> Result<(), String> {
     let is_public = psl::suffix(tld.as_bytes()).map(|s| s.is_known()).unwrap_or(false);
     if is_public {
         return Err(format!(
-            "\".{tld}\" adalah domain internet sungguhan, bisa bentrok dengan situs asli. \
-             Pakai home.arpa, internal, atau lan."
+            "\".{tld}\" is a real internet domain and could clash with real websites. \
+             Use home.arpa, internal, or lan."
         ));
     }
     Err(format!(
-        "\".{tld}\" belum dijamin aman. Pakai salah satu: {}.",
+        "\".{tld}\" isn't guaranteed to be safe. Use one of: {}.",
         SAFE_SUFFIXES[..4].join(", ")
     ))
 }
@@ -42,15 +42,15 @@ pub fn validate_suffix(domain: &str) -> Result<(), String> {
 pub fn validate_label(label: &str) -> Result<(), String> {
     let l = label.trim();
     if l.is_empty() {
-        return Err("Nama tidak boleh kosong.".into());
+        return Err("The name can't be empty.".into());
     }
     if l.len() > 63 {
-        return Err(format!("Nama \"{l}\" terlalu panjang (maks 63 karakter)."));
+        return Err(format!("The name \"{l}\" is too long (max 63 characters)."));
     }
     let ok_chars = l.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
     if !ok_chars || l.starts_with('-') || l.ends_with('-') {
         return Err(format!(
-            "Nama \"{l}\" hanya boleh huruf kecil, angka, dan tanda minus (tidak di awal/akhir)."
+            "The name \"{l}\" can only use lowercase letters, digits, and dashes (not at the start or end)."
         ));
     }
     Ok(())

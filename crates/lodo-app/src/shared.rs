@@ -49,7 +49,7 @@ pub struct Live {
 
 pub fn mood(live: &Live) -> (Mood, String) {
     if live.helper_version.is_none() {
-        return (Mood::Down, "Helper belum aktif".into());
+        return (Mood::Down, "Service not running".into());
     }
     let s = &live.status;
     if s.is_empty() {
@@ -57,13 +57,13 @@ pub fn mood(live: &Live) -> (Mood, String) {
     }
     let down = s.iter().filter(|x| x.route == Route::Unreachable).count();
     if down > 0 {
-        return (Mood::Down, format!("{down} server tak terjangkau"));
+        return (Mood::Down, format!("{down} server(s) unreachable"));
     }
     if s.iter().all(|x| x.route == Route::Unknown) {
-        return (Mood::Idle, "Sedang mengecek…".into());
+        return (Mood::Idle, "Checking…".into());
     }
     if let Some(Route::Vpn(v)) = s.iter().map(|x| &x.route).find(|r| matches!(r, Route::Vpn(_))) {
-        return (Mood::Vpn, format!("Lewat {v}"));
+        return (Mood::Vpn, format!("Via {v}"));
     }
     (Mood::Home, Mood::Home.label().into())
 }
@@ -104,9 +104,9 @@ pub fn route_changes(old: &[ServerStatus], new: &[ServerStatus]) -> Vec<String> 
                 return None;
             }
             Some(match &n.route {
-                Route::Home => format!("{} sekarang lewat jaringan rumah", n.fqdn),
-                Route::Vpn(v) => format!("{} sekarang lewat {v}", n.fqdn),
-                Route::Unreachable => format!("{} tidak terjangkau", n.fqdn),
+                Route::Home => format!("{} now uses your home network", n.fqdn),
+                Route::Vpn(v) => format!("{} now goes through {v}", n.fqdn),
+                Route::Unreachable => format!("{} is unreachable", n.fqdn),
                 Route::Unknown => return None,
             })
         })

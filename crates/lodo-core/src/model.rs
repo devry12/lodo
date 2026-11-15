@@ -148,19 +148,19 @@ impl Config {
             }
             for n in std::iter::once(&s.name).chain(s.aliases.iter()) {
                 if !seen.insert(n.to_ascii_lowercase()) {
-                    return Err(format!("Nama \"{n}\" dipakai lebih dari sekali."));
+                    return Err(format!("The name \"{n}\" is used more than once."));
                 }
             }
             if s.home_ip.trim().parse::<IpAddr>().is_err() {
-                return Err(format!("IP rumah untuk \"{}\" tidak valid.", s.name));
+                return Err(format!("The home IP for \"{}\" isn't valid.", s.name));
             }
             for v in &s.vpn {
                 if v.ip.trim().parse::<IpAddr>().is_err() {
-                    return Err(format!("IP VPN \"{}\" untuk \"{}\" tidak valid.", v.ip, s.name));
+                    return Err(format!("The VPN IP \"{}\" for \"{}\" isn't valid.", v.ip, s.name));
                 }
             }
             if s.port == 0 || s.web_port == Some(0) || s.extra_ports.contains(&0) {
-                return Err(format!("Port untuk \"{}\" tidak valid.", s.name));
+                return Err(format!("A port for \"{}\" isn't valid.", s.name));
             }
         }
         Ok(())

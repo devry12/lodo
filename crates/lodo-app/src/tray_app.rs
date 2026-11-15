@@ -158,7 +158,7 @@ impl TrayApp {
         }
         self.updating = true;
         if let Some(t) = &self.tray {
-            t.update_item.set_text("Memperbarui…");
+            t.update_item.set_text("Updating…");
             t.update_item.set_enabled(false);
         }
         let proxy = self.proxy.clone();
@@ -194,7 +194,7 @@ impl TrayApp {
                 *pending.lock().unwrap() = Some(m);
                 let _ = proxy.send_event(Ev::UpdateAvailable(v));
             }
-            Ok(None) => notify(&format!("lodo sudah versi terbaru ({}).", updater::VERSION)),
+            Ok(None) => notify(&format!("lodo is up to date ({}).", updater::VERSION)),
             Err(e) => notify(&e),
         });
     }
@@ -241,21 +241,21 @@ impl ApplicationHandler<Ev> for TrayApp {
             Ev::Refresh => self.refresh(),
             Ev::UpdateAvailable(v) => {
                 if let Some(t) = &self.tray {
-                    t.update_item.set_text(format!("Perbarui ke versi {v}"));
+                    t.update_item.set_text(format!("Update to version {v}"));
                 }
-                notify(&format!("lodo versi {v} tersedia. Klik \"Perbarui\" di menu lodo."));
+                notify(&format!("lodo {v} is available. Click \"Update\" in the lodo menu."));
             }
             Ev::UpdateNow(open_window) => self.start_update(open_window),
             Ev::UpdateFailed(e) => {
                 self.updating = false;
                 if let Some(t) = &self.tray {
                     t.update_item.set_enabled(true);
-                    t.update_item.set_text("Cek pembaruan");
+                    t.update_item.set_text("Check for updates");
                 }
                 if e.is_empty() {
-                    notify(&format!("lodo sudah versi terbaru ({}).", updater::VERSION));
+                    notify(&format!("lodo is up to date ({}).", updater::VERSION));
                 } else {
-                    notify(&format!("Pembaruan gagal: {e}"));
+                    notify(&format!("Update failed: {e}"));
                 }
             }
             Ev::Restart => {

@@ -18,7 +18,7 @@ const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 /// Ganti binary di `target` dengan versi terbaru. `Ok(None)` = sudah terbaru.
 pub fn update_binary(target: &Path) -> Result<Option<String>, String> {
     let Some(m) = update::check(VERSION)? else { return Ok(None) };
-    let asset = m.asset("helper").ok_or("Belum ada helper untuk platform ini di rilis terbaru.")?;
+    let asset = m.asset("helper").ok_or("The latest release has no service build for this platform yet.")?;
     let tmp = target.with_extension("download");
     update::download(asset, &tmp)?;
     #[cfg(unix)]
@@ -31,17 +31,17 @@ pub fn update_binary(target: &Path) -> Result<Option<String>, String> {
     {
         let old = target.with_extension("old");
         let _ = std::fs::remove_file(&old);
-        std::fs::rename(target, &old).map_err(|e| format!("Gagal mengganti helper: {e}"))?;
+        std::fs::rename(target, &old).map_err(|e| format!("Couldn't replace the service: {e}"))?;
     }
-    std::fs::rename(&tmp, target).map_err(|e| format!("Gagal memasang helper baru: {e}"))?;
+    std::fs::rename(&tmp, target).map_err(|e| format!("Couldn't install the new service: {e}"))?;
     Ok(Some(m.version))
 }
 
 pub fn update_cli() -> Result<(), String> {
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
     match update_binary(&me)? {
-        Some(v) => println!("lodo-helper diperbarui ke {v}: {}", me.display()),
-        None => println!("lodo-helper sudah versi terbaru ({VERSION})."),
+        Some(v) => println!("lodo-helper updated to {v}: {}", me.display()),
+        None => println!("lodo-helper is up to date ({VERSION})."),
     }
     Ok(())
 }
@@ -70,11 +70,11 @@ pub fn spawn() -> Sender<()> {
             wait = CHECK_EVERY;
             match update_binary(&me) {
                 Ok(Some(v)) => {
-                    eprintln!("lodo-helper: diperbarui ke {v}, memulai ulang");
+                    eprintln!("lodo-helper: updated to {v}, restarting");
                     restart(&me);
                 }
                 Ok(None) => {}
-                Err(e) => eprintln!("lodo-helper: pembaruan gagal: {e}"),
+                Err(e) => eprintln!("lodo-helper: update failed: {e}"),
             }
         }
     });

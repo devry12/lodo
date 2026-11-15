@@ -1718,7 +1718,7 @@ dependencies = [
 
 [[package]]
 name = "lodo-app"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "auto-launch",
  "eframe",
@@ -1730,7 +1730,7 @@ dependencies = [
 
 [[package]]
 name = "lodo-core"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -1743,7 +1743,7 @@ dependencies = [
 
 [[package]]
 name = "lodo-helper"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "base64",
  "if-addrs",
@@ -1755,7 +1755,7 @@ dependencies = [
 
 [[package]]
 name = "lodo-release"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "base64",
  "ed25519-dalek",

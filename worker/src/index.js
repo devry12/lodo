@@ -141,8 +141,8 @@ ${btn("linux", "Linux", lin, "AppImage")}
 
 <h2>How it works</h2>
 <ol>
-<li>Install lodo, open it, click <b>Mulai</b> (Start) and enter your admin password once.</li>
-<li>Click <b>Tambah server</b> (Add server): enter a name, the home IP, and the VPN IP. Netbird and Tailscale peers are detected automatically.</li>
+<li>Install lodo, open it, click <b>Get started</b> and enter your computer password once.</li>
+<li>Click <b>Add server</b>: give it a name and its IP at home. Netbird and Tailscale devices are found automatically, and so are web apps like Gitea.</li>
 <li>Use <code>git.home.arpa</code> everywhere: in git, SSH, or your browser, with HTTPS. lodo picks the route on its own and keeps itself up to date.</li>
 </ol>
 

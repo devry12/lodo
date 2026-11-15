@@ -27,13 +27,13 @@ fn main() {
 
 fn update_cli() {
     match updater::check() {
-        Ok(None) => println!("lodo sudah versi terbaru ({}).", updater::VERSION),
+        Ok(None) => println!("lodo is up to date ({}).", updater::VERSION),
         Ok(Some(m)) => {
-            println!("Memasang lodo {}…", m.version);
+            println!("Installing lodo {}…", m.version);
             match updater::install(&m, false) {
-                Ok(()) => println!("Selesai. lodo akan dibuka ulang."),
+                Ok(()) => println!("Done. lodo will reopen."),
                 Err(e) => {
-                    eprintln!("Gagal: {e}");
+                    eprintln!("Failed: {e}");
                     std::process::exit(1);
                 }
             }

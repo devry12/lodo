@@ -46,14 +46,14 @@ pub enum Response {
 
 pub fn send(req: &Request) -> Result<Response, String> {
     let mut s = TcpStream::connect_timeout(&addr(), Duration::from_millis(500))
-        .map_err(|_| "Helper lodo belum berjalan.".to_string())?;
+        .map_err(|_| "The lodo service isn't running.".to_string())?;
     s.set_read_timeout(Some(Duration::from_secs(15))).ok();
     let mut line = serde_json::to_string(req).map_err(|e| e.to_string())?;
     line.push('\n');
     s.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
     let mut buf = String::new();
     BufReader::new(s).read_line(&mut buf).map_err(|e| e.to_string())?;
-    serde_json::from_str(&buf).map_err(|e| format!("Balasan helper tidak dikenali: {e}"))
+    serde_json::from_str(&buf).map_err(|e| format!("Unrecognized reply from the lodo service: {e}"))
 }
 
 /// Baca satu request dari koneksi (dipakai helper).

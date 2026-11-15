@@ -90,7 +90,7 @@ impl Forwarder {
                     let addr = *addr;
                     thread::spawn(move || serve(l, addr, shared, stop));
                 }
-                Err(e) => eprintln!("lodo-helper: tidak bisa membuka {addr}: {e}"),
+                Err(e) => eprintln!("lodo-helper: couldn't listen on {addr}: {e}"),
             }
         }
     }
@@ -140,7 +140,7 @@ fn serve(listener: TcpListener, addr: SocketAddr, shared: Arc<RwLock<Shared>>, s
                 if let Some(cfg) = tls {
                     thread::spawn(move || {
                         if let Err(e) = pipe_tls(client, target, cfg) {
-                            eprintln!("lodo-helper: koneksi HTTPS: {e}");
+                            eprintln!("lodo-helper: HTTPS connection: {e}");
                         }
                     });
                 }

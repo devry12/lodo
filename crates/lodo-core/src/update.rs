@@ -79,16 +79,16 @@ pub fn verify_manifest(json: &[u8], sig_b64: &str, public_key_b64: &str) -> Resu
         .decode(public_key_b64.trim())
         .ok()
         .and_then(|k| k.try_into().ok())
-        .ok_or("Kunci publik pembaruan tidak valid.")?;
-    let key = VerifyingKey::from_bytes(&key).map_err(|_| "Kunci publik pembaruan tidak valid.")?;
+        .ok_or("The update public key is invalid.")?;
+    let key = VerifyingKey::from_bytes(&key).map_err(|_| "The update public key is invalid.")?;
     let sig: [u8; 64] = B64
         .decode(sig_b64.trim())
         .ok()
         .and_then(|s| s.try_into().ok())
-        .ok_or("Tanda tangan pembaruan rusak.")?;
+        .ok_or("The update signature is corrupted.")?;
     key.verify_strict(json, &Signature::from_bytes(&sig))
-        .map_err(|_| "Tanda tangan pembaruan tidak cocok, pembaruan diabaikan.")?;
-    serde_json::from_slice(json).map_err(|e| format!("Manifest pembaruan tidak dikenali: {e}"))
+        .map_err(|_| "The update signature doesn't match; the update was ignored.")?;
+    serde_json::from_slice(json).map_err(|e| format!("Unrecognized update manifest: {e}"))
 }
 
 fn agent() -> ureq::Agent {
@@ -101,8 +101,8 @@ fn agent() -> ureq::Agent {
 }
 
 fn get_bytes(url: &str, limit: u64) -> Result<Vec<u8>, String> {
-    let resp = agent().get(url).call().map_err(|e| format!("Tidak bisa menghubungi server pembaruan: {e}"))?;
-    resp.into_body().with_config().limit(limit).read_to_vec().map_err(|e| format!("Gagal mengunduh: {e}"))
+    let resp = agent().get(url).call().map_err(|e| format!("Couldn't reach the update server: {e}"))?;
+    resp.into_body().with_config().limit(limit).read_to_vec().map_err(|e| format!("Download failed: {e}"))
 }
 
 /// Ambil manifest terbaru yang tanda tangannya sah.
@@ -122,30 +122,30 @@ pub fn check(current: &str) -> Result<Option<Manifest>, String> {
 /// Unduh `asset` ke `dest` dan pastikan SHA-256-nya cocok.
 pub fn download(asset: &Asset, dest: &Path) -> Result<(), String> {
     if asset.size > MAX_DOWNLOAD {
-        return Err("File pembaruan terlalu besar.".into());
+        return Err("The update file is too large.".into());
     }
     let url = if asset.url.starts_with("https://") { asset.url.clone() } else { format!("{}/{}", base_url(), asset.url) };
-    let resp = agent().get(&url).call().map_err(|e| format!("Gagal mengunduh pembaruan: {e}"))?;
+    let resp = agent().get(&url).call().map_err(|e| format!("Couldn't download the update: {e}"))?;
     let mut reader = resp.into_body().into_with_config().limit(MAX_DOWNLOAD).reader();
     let tmp = dest.with_extension("part");
-    let mut file = std::fs::File::create(&tmp).map_err(|e| format!("Gagal membuat file: {e}"))?;
+    let mut file = std::fs::File::create(&tmp).map_err(|e| format!("Couldn't create the file: {e}"))?;
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 64 * 1024];
     loop {
-        let n = reader.read(&mut buf).map_err(|e| format!("Unduhan terputus: {e}"))?;
+        let n = reader.read(&mut buf).map_err(|e| format!("Download interrupted: {e}"))?;
         if n == 0 {
             break;
         }
         hasher.update(&buf[..n]);
-        file.write_all(&buf[..n]).map_err(|e| format!("Gagal menulis file: {e}"))?;
+        file.write_all(&buf[..n]).map_err(|e| format!("Couldn't write the file: {e}"))?;
     }
     drop(file);
     let got = hex(&hasher.finalize());
     if !got.eq_ignore_ascii_case(asset.sha256.trim()) {
         let _ = std::fs::remove_file(&tmp);
-        return Err("File pembaruan rusak (checksum tidak cocok).".into());
+        return Err("The update file is corrupted (checksum mismatch).".into());
     }
-    std::fs::rename(&tmp, dest).map_err(|e| format!("Gagal menyimpan pembaruan: {e}"))
+    std::fs::rename(&tmp, dest).map_err(|e| format!("Couldn't save the update: {e}"))
 }
 
 pub fn sha256_file(path: &Path) -> std::io::Result<String> {

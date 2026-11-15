@@ -24,7 +24,7 @@ pub fn get_config() -> Result<Config, String> {
     match ipc::send(&Request::GetConfig)? {
         Response::Config(c) => Ok(c),
         Response::Error(e) => Err(e),
-        _ => Err("Balasan helper tidak terduga.".into()),
+        _ => Err("Unexpected reply from the lodo service.".into()),
     }
 }
 
@@ -32,7 +32,7 @@ pub fn set_config(c: &Config) -> Result<(), String> {
     match ipc::send(&Request::SetConfig(c.clone()))? {
         Response::Ok => Ok(()),
         Response::Error(e) => Err(e),
-        _ => Err("Balasan helper tidak terduga.".into()),
+        _ => Err("Unexpected reply from the lodo service.".into()),
     }
 }
 
@@ -81,7 +81,7 @@ pub fn trust_ca() -> Result<(), String> {
     }
     let ca = match ipc::send(&Request::HttpsStatus)? {
         Response::Https { ca: Some(ca), .. } => ca,
-        _ => return Err("Sertifikat lodo belum dibuat. Isi Port web di salah satu server dulu.".into()),
+        _ => return Err("lodo's certificate doesn't exist yet. Set a web page on one of your servers first.".into()),
     };
     let kc = login_keychain();
     untrust_ca_user();
@@ -94,9 +94,9 @@ pub fn trust_ca() -> Result<(), String> {
     } else {
         let err = String::from_utf8_lossy(&out.stderr);
         if err.contains("canceled") || err.contains("denied") {
-            Err("Dibatalkan. HTTPS lokal belum aktif.".into())
+            Err("Cancelled. HTTPS isn't on yet.".into())
         } else {
-            Err(format!("Gagal mengaktifkan HTTPS: {}", err.trim()))
+            Err(format!("Couldn't turn on HTTPS: {}", err.trim()))
         }
     }
 }
@@ -131,7 +131,7 @@ fn helper_binary() -> Result<PathBuf, String> {
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
     let name = if cfg!(windows) { "lodo-helper.exe" } else { "lodo-helper" };
     let p = me.with_file_name(name);
-    if p.exists() { Ok(p) } else { Err(format!("File {name} tidak ditemukan di samping aplikasi.")) }
+    if p.exists() { Ok(p) } else { Err(format!("{name} wasn't found next to the app.")) }
 }
 
 /// Jalankan `lodo-helper <action>` dengan izin admin. OS akan menampilkan dialog password.
@@ -141,7 +141,7 @@ fn run_elevated(action: &str) -> Result<(), String> {
     let out = if cfg!(target_os = "macos") {
         let shell = format!("'{}' {action}", path.replace('\'', "'\\''"));
         let script = format!(
-            "do shell script \"{}\" with prompt \"lodo perlu izin admin sekali untuk mengatur alamat server.\" with administrator privileges",
+            "do shell script \"{}\" with prompt \"lodo needs admin permission once to manage server addresses.\" with administrator privileges",
             shell.replace('\\', "\\\\").replace('"', "\\\"")
         );
         Command::new("/usr/bin/osascript").args(["-e", &script]).output()
@@ -160,9 +160,9 @@ fn run_elevated(action: &str) -> Result<(), String> {
     } else {
         let err = String::from_utf8_lossy(&out.stderr);
         if err.contains("-128") || err.contains("canceled") || err.contains("dismissed") || out.status.code() == Some(126) {
-            Err("Dibatalkan. Izin admin diperlukan supaya lodo bisa bekerja.".into())
+            Err("Cancelled. lodo needs admin permission to work.".into())
         } else {
-            Err(format!("Gagal: {}", err.trim()))
+            Err(format!("Failed: {}", err.trim()))
         }
     }
 }
@@ -177,7 +177,7 @@ pub fn install() -> Result<(), String> {
         }
         std::thread::sleep(Duration::from_millis(300));
     }
-    Err("Helper terpasang tapi belum merespons. Coba buka ulang lodo.".into())
+    Err("The lodo service was installed but isn't responding. Try reopening lodo.".into())
 }
 
 pub fn uninstall() -> Result<(), String> {

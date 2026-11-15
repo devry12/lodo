@@ -27,7 +27,7 @@ fn main() {
         ["keygen", path] => keygen(Path::new(path)),
         ["manifest", dir, version] => manifest(Path::new(dir), version, ""),
         ["manifest", dir, version, notes] => manifest(Path::new(dir), version, notes),
-        _ => Err("Pemakaian: lodo-release keygen <file> | manifest <folder> <versi> [catatan]".into()),
+        _ => Err("Usage: lodo-release keygen <file> | manifest <folder> <version> [notes]".into()),
     };
     if let Err(e) = res {
         eprintln!("lodo-release: {e}");
@@ -37,7 +37,7 @@ fn main() {
 
 fn keygen(path: &Path) -> Result<(), String> {
     if path.exists() {
-        return Err(format!("{} sudah ada, tidak ditimpa.", path.display()));
+        return Err(format!("{} already exists; not overwriting.", path.display()));
     }
     let mut seed = [0u8; 32];
     getrandom::fill(&mut seed).map_err(|e| e.to_string())?;
@@ -51,8 +51,8 @@ fn keygen(path: &Path) -> Result<(), String> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
     }
-    println!("Kunci rahasia: {}", path.display());
-    println!("Kunci publik:  {}", B64.encode(sk.verifying_key().to_bytes()));
+    println!("Private key: {}", path.display());
+    println!("Public key:  {}", B64.encode(sk.verifying_key().to_bytes()));
     Ok(())
 }
 
@@ -60,12 +60,12 @@ fn signing_key() -> Result<SigningKey, String> {
     let b64 = match std::env::var("LODO_SIGNING_KEY") {
         Ok(k) if !k.trim().is_empty() => k,
         _ => {
-            let f = std::env::var("LODO_SIGNING_KEY_FILE").map_err(|_| "Set LODO_SIGNING_KEY atau LODO_SIGNING_KEY_FILE.")?;
+            let f = std::env::var("LODO_SIGNING_KEY_FILE").map_err(|_| "Set LODO_SIGNING_KEY or LODO_SIGNING_KEY_FILE.")?;
             std::fs::read_to_string(&f).map_err(|e| format!("{f}: {e}"))?
         }
     };
     let seed: [u8; 32] =
-        B64.decode(b64.trim()).ok().and_then(|k| k.try_into().ok()).ok_or("Kunci rahasia tidak valid.")?;
+        B64.decode(b64.trim()).ok().and_then(|k| k.try_into().ok()).ok_or("Invalid private key.")?;
     Ok(SigningKey::from_bytes(&seed))
 }
 
@@ -102,7 +102,7 @@ fn manifest(dir: &Path, version: &str, notes: &str) -> Result<(), String> {
         assets.insert(k, asset);
     }
     if assets.is_empty() {
-        return Err(format!("Tidak ada file rilis di {}.", dir.display()));
+        return Err(format!("No release files in {}.", dir.display()));
     }
     let date = std::process::Command::new("date")
         .args(["-u", "+%Y-%m-%d"])
@@ -114,7 +114,7 @@ fn manifest(dir: &Path, version: &str, notes: &str) -> Result<(), String> {
     let sig = B64.encode(key.sign(&json).to_bytes());
     std::fs::write(dir.join("latest.json"), &json).map_err(|e| e.to_string())?;
     std::fs::write(dir.join("latest.json.sig"), sig).map_err(|e| e.to_string())?;
-    println!("latest.json versi {version} ditandatangani (kunci publik {}).", B64.encode(key.verifying_key().to_bytes()));
+    println!("latest.json for version {version} signed (public key {}).", B64.encode(key.verifying_key().to_bytes()));
     Ok(())
 }
 

@@ -36,13 +36,13 @@ fn copy_self(dest: &Path) -> Result<(), String> {
     }
     // Salin ke file sementara lalu rename, supaya aman walau versi lama masih jalan.
     let tmp = dest.with_extension("new");
-    std::fs::copy(&me, &tmp).map_err(|e| format!("Gagal menyalin helper: {e}"))?;
+    std::fs::copy(&me, &tmp).map_err(|e| format!("Couldn't copy the service: {e}"))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
     }
-    std::fs::rename(&tmp, dest).map_err(|e| format!("Gagal memasang helper: {e}"))
+    std::fs::rename(&tmp, dest).map_err(|e| format!("Couldn't install the service: {e}"))
 }
 
 pub fn install() -> Result<(), String> {
@@ -55,9 +55,9 @@ pub fn install() -> Result<(), String> {
     if !cfg!(target_os = "macos")
         && let Err(e) = crate::ca::trust()
     {
-        eprintln!("lodo-helper: HTTPS lokal belum aktif: {e}");
+        eprintln!("lodo-helper: local HTTPS isn't on yet: {e}");
     }
-    println!("lodo-helper terpasang di {}", bin.display());
+    println!("lodo-helper installed at {}", bin.display());
     Ok(())
 }
 
@@ -70,7 +70,7 @@ pub fn uninstall() -> Result<(), String> {
     crate::forward::remove_loopback_aliases();
     crate::ca::untrust_and_delete();
     let _ = std::fs::remove_file(installed_path());
-    println!("lodo-helper dihapus, file hosts sudah dibersihkan.");
+    println!("lodo-helper removed and the hosts file cleaned up.");
     Ok(())
 }
 
@@ -97,7 +97,7 @@ fn start_service(bin: &Path) -> Result<(), String> {
 "#,
         bin.display()
     );
-    std::fs::write(plist_path(), plist).map_err(|e| format!("Gagal menulis plist: {e}"))?;
+    std::fs::write(plist_path(), plist).map_err(|e| format!("Couldn't write the plist: {e}"))?;
     sh("/bin/launchctl", &["bootstrap", "system", &plist_path()])
 }
 
@@ -118,12 +118,12 @@ const UNIT: &str = "/etc/systemd/system/lodo-helper.service";
 #[cfg(all(unix, not(target_os = "macos")))]
 fn start_service(bin: &Path) -> Result<(), String> {
     let unit = format!(
-        "[Unit]\nDescription=lodo helper (alamat server rumah otomatis)\nAfter=network.target\n\n\
+        "[Unit]\nDescription=lodo helper (automatic home server addresses)\nAfter=network.target\n\n\
          [Service]\nExecStart={} run\nRestart=always\nRestartSec=3\n\n\
          [Install]\nWantedBy=multi-user.target\n",
         bin.display()
     );
-    std::fs::write(UNIT, unit).map_err(|e| format!("Gagal menulis unit systemd: {e}"))?;
+    std::fs::write(UNIT, unit).map_err(|e| format!("Couldn't write the systemd unit: {e}"))?;
     sh("systemctl", &["daemon-reload"])?;
     sh("systemctl", &["enable", "--now", "lodo-helper.service"])
 }

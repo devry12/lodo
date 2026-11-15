@@ -33,12 +33,12 @@ fn main() {
         "install" => service::install(),
         "uninstall" => service::uninstall(),
         "update" => selfupdate::update_cli(),
-        "trust" => ca::trust().map(|_| println!("Sertifikat lodo dipercaya. HTTPS lokal aktif.")),
+        "trust" => ca::trust().map(|_| println!("lodo certificate trusted. Local HTTPS is on.")),
         "--version" => {
             println!("{}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
-        _ => Err("Pemakaian: lodo-helper run | install | uninstall".into()),
+        _ => Err("Usage: lodo-helper run | install | uninstall | update | trust".into()),
     };
     if let Err(e) = res {
         eprintln!("lodo-helper: {e}");
@@ -75,7 +75,7 @@ fn save_config(c: &Config) -> Result<(), String> {
         std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
     }
     let json = serde_json::to_vec_pretty(c).map_err(|e| e.to_string())?;
-    std::fs::write(&p, json).map_err(|e| format!("Gagal menyimpan config: {e}"))
+    std::fs::write(&p, json).map_err(|e| format!("Couldn't save the configuration: {e}"))
 }
 
 struct State {
@@ -104,7 +104,7 @@ fn run() -> Result<(), String> {
         thread::sleep(Duration::from_millis(500));
         listener = TcpListener::bind(ipc::addr());
     }
-    let listener = listener.map_err(|e| format!("Tidak bisa membuka {}: {e}", ipc::addr()))?;
+    let listener = listener.map_err(|e| format!("Couldn't listen on {}: {e}", ipc::addr()))?;
 
     // Pembaruan otomatis helper (hanya untuk helper yang terpasang sebagai service).
     let update_tx = selfupdate::spawn();
@@ -186,7 +186,7 @@ fn check_once(state: &Arc<Mutex<State>>, fwd: &mut forward::Forwarder, leaf: &mu
     match hosts::update_file(&hosts::hosts_path(), &entries) {
         Ok(true) => hosts::flush_dns(),
         Ok(false) => {}
-        Err(e) => eprintln!("lodo-helper: gagal menulis hosts: {e}"),
+        Err(e) => eprintln!("lodo-helper: couldn't write the hosts file: {e}"),
     }
     let mut st = state.lock().unwrap();
     // Abaikan hasil kalau config berubah selama pengecekan; pengecekan baru sudah dipicu.
