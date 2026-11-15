@@ -6,11 +6,13 @@
 //!   lodo-helper uninstall  hapus service + bersihkan hosts (butuh admin)
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod forward;
 mod service;
 
 use lodo_core::ipc::{self, Request, Response};
 use lodo_core::{hosts, probe, serde_json, Config, Route, ServerStatus};
-use std::net::TcpListener;
+use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr, TcpListener};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
@@ -87,7 +89,7 @@ fn run() -> Result<(), String> {
     let state = Arc::new(Mutex::new(State { status: unknown_status(&config), config }));
     let (tx, rx) = mpsc::channel::<()>();
 
-    let listener = TcpListener::bind(ipc::ADDR).map_err(|e| format!("Tidak bisa membuka {}: {e}", ipc::ADDR))?;
+    let listener = TcpListener::bind(ipc::addr()).map_err(|e| format!("Tidak bisa membuka {}: {e}", ipc::addr()))?;
 
     // Pantau perubahan jaringan (ganti WiFi, VPN nyala/mati).
     {
@@ -108,6 +110,7 @@ fn run() -> Result<(), String> {
     }
 
     // Loop utama: cek saat dipicu atau tiap 30 detik.
+    let mut fwd = forward::Forwarder::default();
     let mut first = true;
     loop {
         if !first {
@@ -118,11 +121,11 @@ fn run() -> Result<(), String> {
             while rx.try_recv().is_ok() {} // gabungkan pemicu beruntun
         }
         first = false;
-        check_once(&state);
+        check_once(&state, &mut fwd);
     }
 }
 
-fn check_once(state: &Arc<Mutex<State>>) {
+fn check_once(state: &Arc<Mutex<State>>, fwd: &mut forward::Forwarder) {
     let config = state.lock().unwrap().config.clone();
     // Cek semua server paralel.
     let handles: Vec<_> = config
@@ -133,13 +136,25 @@ fn check_once(state: &Arc<Mutex<State>>) {
         .collect();
     let mut status = Vec::new();
     let mut entries = Vec::new();
+    let mut forwards = HashMap::new();
+    let mut n_loopback = 0;
     for h in handles {
         let Ok((s, (route, ip))) = h.join() else { continue };
-        if let Some(ip) = ip {
+        let ports = s.forwards();
+        let lo = if ports.is_empty() { None } else { forward::loopback(n_loopback) };
+        if let Some(lo) = lo {
+            // Nama selalu mengarah ke alamat loopback; helper yang meneruskan.
+            n_loopback += 1;
+            entries.push((lo.to_string(), s.all_names(&config.domain)));
+            for (listen, target) in ports {
+                forwards.insert(SocketAddr::new(IpAddr::V4(lo), listen), ip.map(|ip| SocketAddr::new(ip, target)));
+            }
+        } else if let Some(ip) = ip {
             entries.push((ip.to_string(), s.all_names(&config.domain)));
         }
         status.push(ServerStatus { name: s.name.clone(), fqdn: s.fqdn(&config.domain), ip: ip.map(|i| i.to_string()), route });
     }
+    fwd.apply(&forwards);
     match hosts::update_file(&hosts::hosts_path(), &entries) {
         Ok(true) => hosts::flush_dns(),
         Ok(false) => {}

@@ -57,6 +57,8 @@ mod tests {
             vpn: vec![VpnTarget { label: "Netbird".into(), ip: vpn.into() }],
             port,
             aliases: vec![],
+            web_port: None,
+            extra_ports: vec![],
         }
     }
 

@@ -9,6 +9,16 @@ use std::time::Duration;
 
 pub const ADDR: &str = "127.0.0.1:47811";
 
+/// Alamat helper. `LODO_IPC_ADDR` (harus 127.0.0.1) untuk pengujian berdampingan
+/// dengan helper yang sudah terpasang.
+pub fn addr() -> SocketAddr {
+    std::env::var("LODO_IPC_ADDR")
+        .ok()
+        .and_then(|s| s.parse::<SocketAddr>().ok())
+        .filter(|a| a.ip().is_loopback())
+        .unwrap_or_else(|| ADDR.parse().unwrap())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Request {
     Ping,
@@ -28,8 +38,7 @@ pub enum Response {
 }
 
 pub fn send(req: &Request) -> Result<Response, String> {
-    let addr: SocketAddr = ADDR.parse().unwrap();
-    let mut s = TcpStream::connect_timeout(&addr, Duration::from_millis(500))
+    let mut s = TcpStream::connect_timeout(&addr(), Duration::from_millis(500))
         .map_err(|_| "Helper lodo belum berjalan.".to_string())?;
     s.set_read_timeout(Some(Duration::from_secs(15))).ok();
     let mut line = serde_json::to_string(req).map_err(|e| e.to_string())?;

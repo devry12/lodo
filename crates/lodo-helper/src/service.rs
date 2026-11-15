@@ -60,6 +60,7 @@ pub fn uninstall() -> Result<(), String> {
     if hosts::update_file(&hosts::hosts_path(), &[]).unwrap_or(false) {
         hosts::flush_dns();
     }
+    crate::forward::remove_loopback_aliases();
     let _ = std::fs::remove_file(installed_path());
     println!("lodo-helper dihapus, file hosts sudah dibersihkan.");
     Ok(())

@@ -43,6 +43,8 @@ struct Editor {
     vpn: Vec<VpnTarget>,
     port: String,
     aliases: String,
+    web_port: String,
+    extra_ports: String,
     advanced: bool,
     error: Option<String>,
     peers: Option<Vec<Peer>>,
@@ -309,6 +311,11 @@ impl App {
                             if ui.button("Ubah").clicked() {
                                 next = Screen::Edit(Box::new(Editor::new(&ctx, Some(i), Some(s))));
                             }
+                            if s.web_port.is_some_and(|p| p != 0)
+                                && ui.button("Buka").on_hover_text(format!("Buka http://{fqdn} di browser")).clicked()
+                            {
+                                ctx.open_url(egui::OpenUrl::new_tab(format!("http://{fqdn}")));
+                            }
                             if ui.button("Salin").on_hover_text("Salin alamat").clicked() {
                                 ctx.copy_text(fqdn.clone());
                                 self.message = Some((false, format!("{fqdn} disalin.")));
@@ -443,6 +450,18 @@ impl App {
                 });
             });
             ui.end_row();
+
+            ui.label("Port web");
+            ui.vertical(|ui| {
+                ui.add(egui::TextEdit::singleline(&mut ed.web_port).hint_text("mis. 3002 (boleh kosong)").desired_width(170.0));
+                let host = if ed.name.trim().is_empty() { "nama".to_string() } else { ed.name.trim().to_string() };
+                let hint = match ed.web_port.trim().parse::<u16>() {
+                    Ok(p) if p != 80 && p != 0 => format!("Cukup buka http://{host}.{} tanpa \":{p}\".", config.domain),
+                    _ => "Isi kalau aplikasi webnya jalan di port selain 80, supaya tidak perlu mengetik :port.".into(),
+                };
+                ui.label(RichText::new(hint).weak());
+            });
+            ui.end_row();
         });
 
         ui.add_space(4.0);
@@ -461,6 +480,21 @@ impl App {
                     ui.label(RichText::new("Pisahkan dengan koma. Semua mengarah ke server yang sama.").weak());
                 });
                 ui.end_row();
+                if !ed.web_port.trim().is_empty() {
+                    ui.label("Port lain");
+                    ui.vertical(|ui| {
+                        ui.add(egui::TextEdit::singleline(&mut ed.extra_ports).hint_text("mis. 2222, 5432").desired_width(220.0));
+                        let fwd: Vec<String> = ed.to_server().forwards().iter().skip(1).map(|(p, _)| p.to_string()).collect();
+                        ui.label(
+                            RichText::new(format!(
+                                "Karena port web diisi, hanya port tertentu yang diteruskan. Sekarang: 80, {}. Tambahkan port lain yang kamu pakai.",
+                                fwd.join(", ")
+                            ))
+                            .weak(),
+                        );
+                    });
+                    ui.end_row();
+                }
             });
         });
 
@@ -611,6 +645,8 @@ impl Editor {
             vpn: s.as_ref().map(|s| s.vpn.clone()).unwrap_or_default(),
             port: s.as_ref().map(|s| s.port).unwrap_or(lodo_core::model::DEFAULT_PORT).to_string(),
             aliases: s.as_ref().map(|s| s.aliases.join(", ")).unwrap_or_default(),
+            web_port: s.as_ref().and_then(|s| s.web_port).map(|p| p.to_string()).unwrap_or_default(),
+            extra_ports: s.as_ref().map(|s| s.extra_ports.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", ")).unwrap_or_default(),
             advanced: false,
             error: None,
             peers: None,
@@ -635,6 +671,15 @@ impl Editor {
                 .collect(),
             port: self.port.trim().parse().unwrap_or(0),
             aliases: self.aliases.split(',').map(|a| a.trim().to_ascii_lowercase()).filter(|a| !a.is_empty()).collect(),
+            // Isian tidak valid jadi 0 supaya ditolak validasi dengan pesan yang jelas.
+            web_port: Some(self.web_port.trim()).filter(|p| !p.is_empty()).map(|p| p.parse().unwrap_or(0)),
+            extra_ports: self
+                .extra_ports
+                .split([',', ' '])
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .map(|p| p.parse().unwrap_or(0))
+                .collect(),
         }
     }
 }

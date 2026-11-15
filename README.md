@@ -17,6 +17,7 @@ Tidak perlu ganti remote git, config ssh, atau bookmark lagi tiap pindah tempat.
    - **Nama**: mis. `git`, jadi alamatnya `git.home.arpa`
    - **IP di rumah**: mis. `192.168.1.10`
    - **IP lewat VPN**: pilih dari daftar Netbird/Tailscale (terdeteksi otomatis), atau klik **+ Isi manual**
+   - **Port web** (boleh kosong): kalau aplikasi webnya jalan di port lain, mis. Gitea di `3002`, isi `3002`. Setelah itu cukup buka `http://git.home.arpa` tanpa `:3002`, atau klik **Buka**.
    - Klik **Tes koneksi** untuk melihat jalur mana yang bisa dipakai sekarang.
 4. Selesai. Pakai alamatnya di mana saja:
    ```bash
@@ -51,6 +52,7 @@ lodo (tray, ~14 MB)  ──►  lodo-helper (service admin, ~1 MB)  ──►  f
   # END lodo
   ```
   Baris lain di file hosts tidak pernah disentuh. Backup asli disimpan sebagai `hosts.lodo-backup`.
+- **Port web**: file hosts tidak bisa memetakan port. Jadi server yang punya port web diberi alamat loopback sendiri (`127.77.0.2`, `127.77.0.3`, …). Nama lodo mengarah ke alamat itu, dan helper meneruskan koneksi TCP ke IP yang sedang dipilih: port 80 ke port web, plus port web itu sendiri, port tes (mis. 22), dan **Port lain** di bagian Lanjutan. Port yang tidak terdaftar tidak diteruskan. Di macOS helper menambah alias `lo0` untuk alamat itu.
 - Service: launchd (macOS), systemd (Linux), Task Scheduler sebagai SYSTEM (Windows).
 - App dan helper bicara lewat `127.0.0.1:47811`. Helper memvalidasi setiap config, jadi nama yang bisa diatur hanya nama di bawah akhiran domain pribadi.
 - **Hapus lodo** (di Pengaturan) melepas service dan membersihkan blok lodo dari file hosts.
@@ -72,8 +74,11 @@ cargo test --workspace
 Jalankan helper tanpa root, memakai file sementara:
 
 ```bash
-LODO_HOSTS_FILE=/tmp/hosts LODO_CONFIG=/tmp/lodo.json cargo run -p lodo-helper -- run
+LODO_HOSTS_FILE=/tmp/hosts LODO_CONFIG=/tmp/lodo.json LODO_LOOPBACK=127.0.0.1 LODO_IPC_ADDR=127.0.0.1:47911 \
+  cargo run -p lodo-helper -- run
 ```
+
+`LODO_LOOPBACK` mengganti alamat loopback pertama, dan `LODO_IPC_ADDR` memakai port IPC lain supaya tidak bentrok dengan helper yang sudah terpasang. Port di bawah 1024 (mis. 80) tetap butuh root.
 
 ```bash
 cargo run -p lodo-app --bin lodo
