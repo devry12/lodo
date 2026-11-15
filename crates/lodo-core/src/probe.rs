@@ -76,8 +76,9 @@ mod tests {
     fn falls_back_to_vpn() {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = l.local_addr().unwrap().port();
-        // 192.0.2.1 = TEST-NET-1, tidak pernah bisa dijangkau
-        let (r, _) = resolve(&server("192.0.2.1", "127.0.0.1", port));
+        // Listener hanya di IPv4, jadi ::1 di port yang sama ditolak. Sengaja tidak
+        // memakai IP luar: beberapa jaringan (mis. hotspot) menerima koneksi ke IP apa pun.
+        let (r, _) = resolve(&server("::1", "127.0.0.1", port));
         assert_eq!(r, Route::Vpn("Netbird".into()));
     }
 
@@ -86,7 +87,7 @@ mod tests {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = l.local_addr().unwrap().port();
         drop(l); // port tertutup -> connection refused
-        let (r, ip) = resolve(&server("192.0.2.1", "127.0.0.1", port));
+        let (r, ip) = resolve(&server("::1", "127.0.0.1", port));
         assert_eq!(r, Route::Unreachable);
         assert!(ip.is_none());
     }

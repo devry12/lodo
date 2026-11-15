@@ -62,7 +62,7 @@ mod tests {
 
     #[test]
     fn safe_suffixes_ok() {
-        for d in ["home.arpa", "internal", "rumah.internal", "devry.home.arpa", "lan", "test"] {
+        for d in ["home.arpa", "internal", "rumah.internal", "rumah.home.arpa", "lan", "test"] {
             assert!(validate_suffix(d).is_ok(), "{d}");
         }
     }

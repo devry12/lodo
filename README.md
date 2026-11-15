@@ -76,7 +76,7 @@ Rilis dihosting di **https://lodo.kreasimaju.id** (Cloudflare Worker + R2, kode 
 ### Menerbitkan rilis
 
 1. Naikkan `version` di semua `crates/*/Cargo.toml`.
-2. **Lewat CI**: push tag `v0.3.1`. CI membuat installer untuk ketiga OS lalu menerbitkannya. Butuh secret `LODO_SIGNING_KEY` (isi `~/.config/lodo/signing.key`), `CLOUDFLARE_API_TOKEN` (izin R2 edit), dan `CLOUDFLARE_ACCOUNT_ID`.
+2. **Lewat CI**: push tag `v0.3.1`. CI membuat installer untuk ketiga OS lalu menerbitkannya. Secret-nya disimpan di GitHub Environment `release` (Settings → Environments), bukan secret repo biasa, supaya pull request dan fork tidak bisa memakainya: `LODO_SIGNING_KEY` (isi `~/.config/lodo/signing.key`), `CLOUDFLARE_API_TOKEN` (hanya izin R2 edit), dan `CLOUDFLARE_ACCOUNT_ID`.
 3. **Manual dari Mac** (hanya macOS):
    ```bash
    cd crates/lodo-app && cargo packager --release --formats app,dmg && cd ../..
@@ -88,6 +88,18 @@ Rilis dihosting di **https://lodo.kreasimaju.id** (Cloudflare Worker + R2, kode 
 Kunci rahasia ada di `~/.config/lodo/signing.key`. **Backup kunci ini.** Kalau hilang, versi yang sudah terpasang tidak bisa menerima pembaruan lagi. Deploy ulang Worker: `cd worker && npx wrangler@4 deploy`.
 
 Untuk pengujian: `LODO_UPDATE_URL=http://127.0.0.1:8799` mengganti server rilis, `LODO_NO_RELAUNCH=1` mencegah lodo membuka ulang dirinya, `lodo --update` dan `lodo-helper update` memperbarui dari terminal.
+
+## Open source & fork
+
+lodo berlisensi [MIT](LICENSE). Laporan keamanan: lihat [SECURITY.md](SECURITY.md).
+
+Build dari repo ini tetap menerima pembaruan **resmi** dari `lodo.kreasimaju.id`. Kalau kamu membuat fork dan menerbitkan rilis sendiri, ganti dulu:
+
+- `DEFAULT_URL` dan `PUBLIC_KEY` di `crates/lodo-core/src/update.rs` (buat kunci sendiri: `cargo run -p lodo-release -- keygen ~/.config/lodo/signing.key`)
+- `routes` dan `bucket_name` di `worker/wrangler.toml`
+- `identifier` di `crates/lodo-app/Cargo.toml`
+
+Kunci rahasia, token Cloudflare, dan isi R2 tidak pernah ada di repo ini.
 
 ## Struktur project
 

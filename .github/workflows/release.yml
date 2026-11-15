@@ -6,6 +6,10 @@ on:
     tags: ["v*"]
   pull_request:
 
+# Default: hanya baca. Job yang butuh lebih harus memintanya sendiri.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -44,11 +48,14 @@ jobs:
           path: release/*
 
   # Tag v* -> tanda tangani dan terbitkan ke https://lodo.kreasimaju.id
-  # Secret yang dibutuhkan: LODO_SIGNING_KEY, CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID
+  # Secret ada di GitHub Environment "release" (bukan secret repo biasa), jadi
+  # tidak bisa dipakai pull request atau fork: LODO_SIGNING_KEY,
+  # CLOUDFLARE_API_TOKEN (hanya izin R2 edit), CLOUDFLARE_ACCOUNT_ID.
   publish:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') && !github.event.repository.fork
     needs: package
     runs-on: ubuntu-latest
+    environment: release
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
