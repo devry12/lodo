@@ -56,9 +56,16 @@ fn run_window() {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("lodo")
-            .with_inner_size([540.0, 520.0])
-            .with_min_inner_size([440.0, 380.0]),
+            .with_inner_size(debug_size().unwrap_or([560.0, 680.0]))
+            .with_min_inner_size([460.0, 420.0]),
         ..Default::default()
     };
     let _ = eframe::run_native("lodo", options, Box::new(move |cc| Ok(Box::new(app::App::new(cc, listener)))));
+}
+
+/// Debug: `LODO_DEBUG_SIZE=560x1500` membuka jendela dengan ukuran tertentu (untuk screenshot).
+fn debug_size() -> Option<[f32; 2]> {
+    let v = std::env::var("LODO_DEBUG_SIZE").ok()?;
+    let (w, h) = v.split_once('x')?;
+    Some([w.parse().ok()?, h.parse().ok()?])
 }

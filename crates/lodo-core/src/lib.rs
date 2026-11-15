@@ -7,6 +7,7 @@ pub mod model;
 pub mod peers;
 pub mod probe;
 pub mod update;
+pub mod webscan;
 
 pub use model::{Config, Route, Server, ServerStatus, VpnTarget};
 pub use serde_json;

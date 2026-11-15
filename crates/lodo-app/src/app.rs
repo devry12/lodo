@@ -5,6 +5,7 @@ use crate::updater;
 use lodo_core::update::Manifest;
 use eframe::egui::{self, Color32, RichText, ViewportCommand};
 use lodo_core::peers::{self, Peer};
+use lodo_core::webscan::{self, WebApp};
 use lodo_core::{domain, probe, Config, Route, Server, ServerStatus, VpnTarget};
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
@@ -13,6 +14,11 @@ use std::thread;
 use std::time::Duration;
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+const ACCENT: Color32 = Color32::from_rgb(10, 132, 255);
+const GREEN: Color32 = Color32::from_rgb(40, 160, 80);
+const RED: Color32 = Color32::from_rgb(220, 60, 50);
+const ORANGE: Color32 = Color32::from_rgb(215, 130, 20);
 
 /// Hasil pekerjaan latar belakang (thread) yang ditunggu UI.
 type Task<T> = Arc<Mutex<Option<T>>>;
@@ -54,6 +60,32 @@ struct Editor {
     peers_task: Option<Task<Vec<Peer>>>,
     test: Option<Vec<(String, String, bool)>>,
     test_task: Option<Task<Vec<(String, String, bool)>>>,
+    scan: Option<WebScan>,
+    scan_task: Option<Task<WebScan>>,
+    confirm_delete: bool,
+}
+
+/// Hasil "Cari otomatis" halaman web di server.
+#[derive(Clone)]
+struct WebScan {
+    /// Server menjawab di salah satu alamat IP.
+    reached: bool,
+    apps: Vec<WebApp>,
+    /// Port 22 (SSH) terbuka.
+    ssh: bool,
+}
+
+/// Cari halaman web di alamat pertama yang menjawab (rumah dulu, lalu VPN).
+fn scan_web(ips: &[std::net::IpAddr]) -> WebScan {
+    for &ip in ips {
+        let ssh_check = thread::spawn(move || probe::reachable(ip, 22, Duration::from_millis(1200)));
+        let apps = webscan::scan(ip, webscan::COMMON_PORTS);
+        let ssh = ssh_check.join().unwrap_or(false);
+        if ssh || !apps.is_empty() {
+            return WebScan { reached: true, apps, ssh };
+        }
+    }
+    WebScan { reached: false, apps: Vec::new(), ssh: false }
 }
 
 struct Settings {
@@ -69,7 +101,8 @@ pub struct App {
     install_task: Option<Task<Result<(), String>>>,
     uninstall_task: Option<Task<Result<(), String>>>,
     trust_task: Option<Task<Result<(), String>>>,
-    confirm_delete: Option<usize>,
+    /// (isi pesan, waktu pertama tampil) untuk menutup pesan sukses otomatis.
+    message_seen: Option<(String, f64)>,
     autostart: bool,
     auto_update: bool,
     update_task: Option<Task<Result<Option<Manifest>, String>>>,
@@ -116,7 +149,7 @@ impl App {
             install_task: None,
             uninstall_task: None,
             trust_task: None,
-            confirm_delete: None,
+            message_seen: None,
             autostart: shared::autolaunch().and_then(|a| a.is_enabled().ok()).unwrap_or(false),
             auto_update: updater::auto_update(),
             update_task: None,
@@ -144,6 +177,46 @@ impl App {
         }
     }
 
+    /// Pesan di atas layar. Pesan sukses hilang sendiri; pesan error menunggu ditutup.
+    fn message_banner(&mut self, ui: &mut egui::Ui) {
+        let Some((err, msg)) = self.message.clone() else {
+            self.message_seen = None;
+            return;
+        };
+        let now = ui.input(|i| i.time);
+        match &self.message_seen {
+            Some((m, since)) if *m == msg => {
+                if !err && now - since > 6.0 {
+                    self.message = None;
+                    self.message_seen = None;
+                    return;
+                }
+            }
+            _ => self.message_seen = Some((msg.clone(), now)),
+        }
+        ui.ctx().request_repaint_after(Duration::from_secs(1));
+        let color = if err { RED } else { GREEN };
+        egui::Frame::new()
+            .fill(color.gamma_multiply(0.14))
+            .corner_radius(8.0)
+            .inner_margin(egui::Margin::symmetric(12, 8))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                egui::containers::Sides::new().shrink_left().show(
+                    ui,
+                    |ui| {
+                        ui.label(RichText::new(&msg).color(color));
+                    },
+                    |ui| {
+                        if ui.small_button("Tutup").clicked() {
+                            self.message = None;
+                        }
+                    },
+                );
+            });
+        ui.add_space(6.0);
+    }
+
     fn mood(&self) -> (Mood, String) {
         shared::mood(&self.live.lock().unwrap())
     }
@@ -155,6 +228,15 @@ impl eframe::App for App {
         let helper_up = self.live.lock().unwrap().helper_version.is_some();
         if helper_up && self.config.is_none() {
             self.config = helper::get_config().ok();
+            // Debug: LODO_DEBUG_SCREEN=edit1 membuka server pertama dan menjalankan "Cari otomatis".
+            if std::env::var("LODO_DEBUG_SCREEN").as_deref() == Ok("edit1")
+                && let Some(s) = self.config.as_ref().and_then(|c| c.servers.first())
+            {
+                let mut ed = Editor::new(_ctx, Some(0), Some(s));
+                let ips: Vec<std::net::IpAddr> = s.candidates().into_iter().map(|(_, ip)| ip).collect();
+                ed.scan_task = Some(spawn_task(_ctx, move || scan_web(&ips)));
+                self.screen = Screen::Edit(Box::new(ed));
+            }
         }
         if !helper_up {
             self.config = None;
@@ -211,19 +293,15 @@ impl eframe::App for App {
         }
 
         egui::CentralPanel::default().show(ui, |ui| {
-            egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+            let mut scroll = egui::ScrollArea::vertical().auto_shrink(false);
+            // Debug: LODO_DEBUG_SCROLL=600 menggulir layar (untuk screenshot bagian bawah).
+            if let Some(y) = std::env::var("LODO_DEBUG_SCROLL").ok().and_then(|v| v.parse::<f32>().ok()) {
+                scroll = scroll.vertical_scroll_offset(y);
+            }
+            scroll.show(ui, |ui| {
                 self.header(ui);
                 ui.add_space(6.0);
-                if let Some((err, msg)) = self.message.clone() {
-                    let color = if err { Color32::from_rgb(220, 60, 50) } else { Color32::from_rgb(40, 160, 80) };
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new(msg).color(color));
-                        if ui.small_button("Tutup").clicked() {
-                            self.message = None;
-                        }
-                    });
-                    ui.add_space(6.0);
-                }
+                self.message_banner(ui);
                 let helper_version = self.live.lock().unwrap().helper_version.clone();
                 match helper_version {
                     None => self.setup_screen(ui),
@@ -235,9 +313,9 @@ impl eframe::App for App {
                         }
                         if v != APP_VERSION && self.install_task.is_none() {
                             card(ui, |ui| {
-                                ui.label("Helper lodo perlu diperbarui ke versi baru.");
-                                ui.label(RichText::new("Biasanya diperbarui otomatis dalam semenit. Kalau tidak, klik tombol di bawah.").weak());
-                                if ui.button("Perbarui (perlu izin admin)").clicked() {
+                                ui.label(RichText::new("lodo sedang memperbarui bagian dalamnya").strong());
+                                ui.label(RichText::new("Biasanya selesai sendiri dalam semenit. Kalau pesan ini tidak hilang, klik tombol di bawah.").weak());
+                                if ui.button("Perbarui sekarang (perlu izin admin)").clicked() {
                                     self.install_task = Some(spawn_task(&ctx, helper::install));
                                 }
                             });
@@ -260,38 +338,57 @@ impl eframe::App for App {
 impl App {
     fn header(&self, ui: &mut egui::Ui) {
         let (mood, text) = self.mood();
+        let [r, g, b] = mood.rgb();
+        let color = Color32::from_rgb(r, g, b);
         ui.horizontal(|ui| {
             ui.heading(RichText::new("lodo").strong());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let [r, g, b] = mood.rgb();
-                ui.label(RichText::new(text).color(Color32::from_rgb(r, g, b)).strong());
-                dot(ui, Color32::from_rgb(r, g, b));
+                // Status dalam bentuk "pil" berwarna supaya langsung terbaca.
+                egui::Frame::new()
+                    .fill(color.gamma_multiply(0.16))
+                    .corner_radius(99.0)
+                    .inner_margin(egui::Margin::symmetric(12, 5))
+                    .show(ui, |ui| {
+                        // Tata letak induknya kanan-ke-kiri, jadi teks dulu baru titik.
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(text).color(color).strong());
+                            dot(ui, color);
+                        });
+                    });
             });
         });
-        ui.separator();
+        ui.add_space(4.0);
     }
 
     fn setup_screen(&mut self, ui: &mut egui::Ui) {
         card(ui, |ui| {
-            ui.label(RichText::new("Selamat datang!").size(20.0).strong());
+            ui.label(RichText::new("Selamat datang di lodo").size(21.0).strong());
+            ui.label(RichText::new("Satu alamat untuk server rumahmu, di rumah maupun di luar.").weak());
+            ui.add_space(8.0);
+            for (n, text) in [
+                (1, "Beri server rumahmu nama, misalnya git.home.arpa."),
+                (2, "Di rumah, lodo otomatis memakai jaringan rumah."),
+                (3, "Di luar, lodo otomatis lewat VPN (Netbird, Tailscale, dan lainnya)."),
+            ] {
+                ui.horizontal(|ui| {
+                    number(ui, n);
+                    ui.label(text);
+                });
+            }
             ui.add_space(4.0);
-            ui.label(
-                "lodo membuat satu alamat tetap untuk server rumahmu, misalnya git.home.arpa.\n\n\
-                 • Di rumah: otomatis pakai IP rumah.\n\
-                 • Di luar: otomatis lewat VPN (Netbird, Tailscale, WireGuard, ZeroTier).\n\n\
-                 Kamu tidak perlu ganti setting lagi tiap pindah tempat.",
-            );
-            ui.add_space(8.0);
-            ui.label(RichText::new("Untuk mengatur alamat, lodo perlu izin admin satu kali saja.").weak());
-            ui.add_space(8.0);
+            ui.label("Kamu tidak perlu mengganti pengaturan lagi tiap pindah tempat.");
+            ui.add_space(10.0);
             if self.install_task.is_some() {
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label("Menunggu izin admin…");
+                    ui.label("Menunggu izin admin… lihat jendela yang muncul.");
                 });
-            } else if ui.button(RichText::new("Mulai").size(17.0)).clicked() {
-                self.message = None;
-                self.install_task = Some(spawn_task(ui.ctx(), helper::install));
+            } else {
+                if primary(ui, "Mulai").clicked() {
+                    self.message = None;
+                    self.install_task = Some(spawn_task(ui.ctx(), helper::install));
+                }
+                ui.label(RichText::new("lodo akan meminta password komputermu satu kali saja, untuk mengatur alamat.").weak());
             }
         });
     }
@@ -307,57 +404,64 @@ impl App {
 
         if config.servers.is_empty() {
             card(ui, |ui| {
-                ui.label(RichText::new("Belum ada server").strong());
-                ui.label("Tambahkan server rumahmu (misalnya git, NAS, atau home server).");
+                ui.label(RichText::new("Tambahkan server pertamamu").size(18.0).strong());
+                ui.label("Server bisa berupa git, NAS, atau komputer apa pun di rumah yang ingin kamu akses dari mana saja.");
+                ui.add_space(6.0);
+                if primary(ui, "+ Tambah server").clicked() {
+                    next = Screen::Edit(Box::new(Editor::new(&ctx, None, None)));
+                }
             });
         }
 
-        // HTTPS lokal butuh CA lodo dipercaya sistem (izin admin sekali).
+        // HTTPS lokal butuh sertifikat lodo dipercaya komputer ini (izin sekali).
         let https_trusted = self.live.lock().unwrap().https_trusted;
         let wants_https = config.servers.iter().any(|s| s.https_target().is_some());
         if wants_https && https_trusted == Some(false) {
             card(ui, |ui| {
-                ui.label(RichText::new("Aktifkan HTTPS").strong());
+                ui.label(RichText::new("Satu langkah lagi: aktifkan https://").strong());
                 ui.label(
-                    RichText::new(
-                        "Supaya https:// di alamat lodo dipercaya browser. lodo memasang sertifikat yang hanya berlaku untuk alamat pribadimu, bukan situs internet.",
-                    )
-                    .weak(),
+                    RichText::new("Supaya browser tidak menampilkan peringatan saat membuka alamat lodo. Hanya berlaku untuk alamat pribadimu, bukan situs internet.")
+                        .weak(),
                 );
                 if self.trust_task.is_some() {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label("Menunggu izin admin…");
+                        ui.label("Menunggu izin… lihat jendela yang muncul.");
                     });
-                } else if ui.button("Aktifkan (perlu izin admin)").clicked() {
+                } else if primary(ui, "Aktifkan").clicked() {
                     self.trust_task = Some(spawn_task(&ctx, helper::trust_ca));
                 }
             });
         }
 
-        let mut delete: Option<usize> = None;
         for (i, s) in config.servers.iter().enumerate() {
             let fqdn = s.fqdn(&config.domain);
             let st = status.iter().find(|x| x.fqdn == fqdn);
+            let web = !s.forwards().is_empty();
+            let https = s.https_target().is_some() && https_trusted == Some(true);
+            let url = format!("{}://{fqdn}", if https { "https" } else { "http" });
             card(ui, |ui| {
                 // Teks di kiri (boleh terlipat), tombol di kanan.
                 egui::containers::Sides::new().shrink_left().show(
                     ui,
                     |ui| {
                         ui.vertical(|ui| {
-                            ui.label(RichText::new(&fqdn).strong().size(16.0));
-                            let (color, text) = route_text(st);
+                            ui.label(RichText::new(&fqdn).strong().size(17.0));
+                            let (color, text, ip) = route_text(st);
                             ui.horizontal_wrapped(|ui| {
                                 dot(ui, color);
                                 ui.label(RichText::new(text).color(color));
+                                if let Some(ip) = ip {
+                                    ui.label(RichText::new(ip).weak().small());
+                                }
                             });
-                            if !s.forwards().is_empty() {
-                                let https = s.https_target().is_some() && https_trusted == Some(true);
-                                let url = format!("{}://{fqdn}", if https { "https" } else { "http" });
+                            if web {
                                 ui.horizontal_wrapped(|ui| {
-                                    ui.label(RichText::new(url).weak());
+                                    if ui.link(&url).on_hover_text("Buka di browser").clicked() {
+                                        ctx.open_url(egui::OpenUrl::new_tab(&url));
+                                    }
                                     if https {
-                                        ui.label(RichText::new("HTTPS").small().color(Color32::from_rgb(40, 160, 80)));
+                                        ui.label(RichText::new("aman").small().color(GREEN));
                                     }
                                 });
                             }
@@ -365,72 +469,67 @@ impl App {
                     },
                     |ui| {
                         // Ditambahkan dari kanan ke kiri.
-                        if self.confirm_delete == Some(i) {
-                            if ui.button(RichText::new("Ya, hapus").color(Color32::from_rgb(220, 60, 50))).clicked() {
-                                delete = Some(i);
-                            }
-                            if ui.button("Batal").clicked() {
-                                self.confirm_delete = None;
-                            }
-                        } else {
-                            if ui.button("Hapus").clicked() {
-                                self.confirm_delete = Some(i);
-                            }
-                            if ui.button("Ubah").clicked() {
-                                next = Screen::Edit(Box::new(Editor::new(&ctx, Some(i), Some(s))));
-                            }
-                            let scheme = if s.https_target().is_some() && https_trusted == Some(true) { "https" } else { "http" };
-                            if s.web_port.is_some_and(|p| p != 0)
-                                && ui.button("Buka").on_hover_text(format!("Buka {scheme}://{fqdn} di browser")).clicked()
-                            {
-                                ctx.open_url(egui::OpenUrl::new_tab(format!("{scheme}://{fqdn}")));
-                            }
-                            if ui.button("Salin").on_hover_text("Salin alamat").clicked() {
-                                ctx.copy_text(fqdn.clone());
-                                self.message = Some((false, format!("{fqdn} disalin.")));
-                            }
+                        if ui.button("Ubah").clicked() {
+                            next = Screen::Edit(Box::new(Editor::new(&ctx, Some(i), Some(s))));
+                        }
+                        if ui.button("Salin").on_hover_text("Salin alamat untuk ditempel di aplikasi lain").clicked() {
+                            ctx.copy_text(fqdn.clone());
+                            self.message = Some((false, format!("{fqdn} disalin. Tempel di git, ssh, atau aplikasi lain.")));
+                        }
+                        if web && primary(ui, "Buka").on_hover_text(format!("Buka {url} di browser")).clicked() {
+                            ctx.open_url(egui::OpenUrl::new_tab(&url));
                         }
                     },
                 );
             });
         }
-        if let Some(i) = delete {
-            let mut c = config.clone();
-            c.servers.remove(i);
-            match self.save_config(c) {
-                Ok(()) => self.message = Some((false, "Server dihapus.".into())),
-                Err(e) => self.message = Some((true, e)),
-            }
-            self.confirm_delete = None;
+
+        if !config.servers.is_empty() {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if primary(ui, "+ Tambah server").clicked() {
+                    next = Screen::Edit(Box::new(Editor::new(&ctx, None, None)));
+                }
+                if ui.button("Cek ulang").on_hover_text("Periksa lagi jalur ke semua server sekarang").clicked() {
+                    thread::spawn(helper::recheck);
+                    self.message = Some((false, "Mengecek ulang…".into()));
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Pengaturan").clicked() {
+                        next = Screen::Settings(Settings { domain: config.domain.clone(), confirm_uninstall: false });
+                    }
+                });
+            });
+        } else {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                if ui.button("Pengaturan").clicked() {
+                    next = Screen::Settings(Settings { domain: config.domain.clone(), confirm_uninstall: false });
+                }
+            });
         }
 
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            if ui.button(RichText::new("+ Tambah server").strong()).clicked() {
-                next = Screen::Edit(Box::new(Editor::new(&ctx, None, None)));
-            }
-            if ui.button("Cek ulang").clicked() {
-                thread::spawn(helper::recheck);
-                self.message = Some((false, "Mengecek ulang…".into()));
-            }
-            if ui.button("Pengaturan").clicked() {
-                next = Screen::Settings(Settings { domain: config.domain.clone(), confirm_uninstall: false });
-            }
-        });
-
         if let Some(first) = config.servers.first() {
-            ui.add_space(14.0);
+            let fqdn = first.fqdn(&config.domain);
+            ui.add_space(12.0);
             ui.label(RichText::new("Cara pakai").strong());
-            ui.label(
-                RichText::new(format!(
-                    "Pakai alamat di atas di git, ssh, atau browser, sama di mana pun kamu berada. Contoh:\n\
-                     git clone ssh://git@{}/user/repo.git\n\
-                     ssh user@{}",
-                    first.fqdn(&config.domain),
-                    first.fqdn(&config.domain)
-                ))
-                .weak(),
-            );
+            ui.label(RichText::new("Pakai alamat yang sama di mana pun kamu berada. lodo yang memilih jalurnya.").weak());
+            let mut examples = Vec::new();
+            if !first.forwards().is_empty() {
+                let https = first.https_target().is_some() && https_trusted == Some(true);
+                examples.push(("Di browser", format!("{}://{fqdn}", if https { "https" } else { "http" })));
+            }
+            examples.push(("Lewat SSH", format!("ssh user@{fqdn}")));
+            examples.push(("Lewat git", format!("git clone ssh://git@{fqdn}/user/repo.git")));
+            for (label, text) in examples {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(label).weak());
+                    ui.label(RichText::new(&text).monospace().size(13.0));
+                    if ui.small_button("Salin").clicked() {
+                        ctx.copy_text(text.clone());
+                        self.message = Some((false, "Disalin.".into()));
+                    }
+                });
+            }
         }
         next
     }
@@ -446,110 +545,183 @@ impl App {
             ed.test = Some(t);
             ed.test_task = None;
         }
+        if let Some(s) = take(&ed.scan_task) {
+            // Kalau hanya ada satu halaman web dan belum diisi, langsung pilihkan.
+            if ed.web_port.trim().is_empty() && s.apps.len() == 1 {
+                ed.pick_web(s.apps[0].port, s.ssh);
+            }
+            ed.scan = Some(s);
+            ed.scan_task = None;
+        }
+        let mut next = None;
 
-        ui.label(RichText::new(if ed.index.is_some() { "Ubah server" } else { "Tambah server" }).size(19.0).strong());
-        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            if ui.button("Kembali").clicked() {
+                next = Some(Screen::Main);
+            }
+            ui.label(RichText::new(if ed.index.is_some() { "Ubah server" } else { "Tambah server" }).size(19.0).strong());
+        });
+        ui.add_space(2.0);
 
-        egui::Grid::new("form").num_columns(2).spacing([12.0, 10.0]).show(ui, |ui| {
-            ui.label("Nama");
-            ui.vertical(|ui| {
-                let r = ui.add(egui::TextEdit::singleline(&mut ed.name).hint_text("mis. git").desired_width(220.0));
-                if r.changed() {
-                    ed.name = sanitize_label(&ed.name);
-                }
-                if !ed.name.is_empty() {
-                    ui.label(RichText::new(format!("Alamat: {}.{}", ed.name, config.domain)).weak());
-                }
-            });
-            ui.end_row();
-
-            ui.label("IP di rumah");
-            ui.add(egui::TextEdit::singleline(&mut ed.home_ip).hint_text("mis. 192.168.1.10").desired_width(220.0));
-            ui.end_row();
-
-            ui.label("IP lewat VPN");
-            ui.vertical(|ui| {
-                let mut remove = None;
-                for (i, v) in ed.vpn.iter_mut().enumerate() {
-                    ui.horizontal(|ui| {
-                        ui.add(egui::TextEdit::singleline(&mut v.label).hint_text("Nama VPN").desired_width(90.0));
-                        ui.add(egui::TextEdit::singleline(&mut v.ip).hint_text("IP VPN").desired_width(130.0));
-                        if ui.small_button("Hapus").clicked() {
-                            remove = Some(i);
-                        }
-                    });
-                }
-                if let Some(i) = remove {
-                    ed.vpn.remove(i);
-                }
+        // ---- 1. Nama
+        card(ui, |ui| {
+            step(ui, 1, "Beri nama");
+            let r = ui.add(egui::TextEdit::singleline(&mut ed.name).hint_text("mis. git, nas, atau rumah").desired_width(260.0));
+            if r.changed() {
+                ed.name = sanitize_label(&ed.name);
+            }
+            if ed.name.is_empty() {
+                ui.label(RichText::new("Nama pendek tanpa spasi. Nama ini menjadi alamat servermu.").weak());
+            } else {
                 ui.horizontal_wrapped(|ui| {
-                    match &ed.peers {
-                        None => {
-                            ui.spinner();
-                            ui.label(RichText::new("Mencari Netbird/Tailscale…").weak());
-                        }
-                        Some(peers) if peers.is_empty() => {
-                            ui.label(RichText::new("Netbird/Tailscale tidak terdeteksi, isi manual.").weak());
-                        }
-                        Some(peers) => {
-                            let mut picked = None;
-                            egui::ComboBox::from_id_salt("peers")
-                                .selected_text("Pilih dari VPN…")
-                                .width(170.0)
-                                .show_ui(ui, |ui| {
-                                    for p in peers {
-                                        if ui.selectable_label(false, format!("{} · {}  ({})", p.vpn, p.name, p.ip)).clicked() {
-                                            picked = Some(p.clone());
-                                        }
+                    ui.label(RichText::new("Alamatnya nanti:").weak());
+                    ui.label(RichText::new(format!("{}.{}", ed.name, config.domain)).strong().color(ACCENT));
+                });
+            }
+        });
+
+        // ---- 2. Lokasi
+        card(ui, |ui| {
+            step(ui, 2, "Di mana servernya?");
+            ui.label("Saat di rumah");
+            ui.add(egui::TextEdit::singleline(&mut ed.home_ip).hint_text("mis. 192.168.1.10").desired_width(260.0));
+            let ip = ed.home_ip.trim();
+            if !ip.is_empty() && ip.parse::<std::net::IpAddr>().is_err() {
+                ui.label(RichText::new("Alamat IP belum lengkap. Contoh: 192.168.1.10").color(ORANGE));
+            } else {
+                ui.label(RichText::new("Alamat IP server di WiFi rumah. Biasanya diawali 192.168 atau 10.").weak());
+            }
+
+            ui.add_space(6.0);
+            ui.label("Saat di luar rumah (lewat VPN)");
+            let mut remove = None;
+            for (i, v) in ed.vpn.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.add(egui::TextEdit::singleline(&mut v.label).hint_text("Nama VPN").desired_width(90.0));
+                    ui.add(egui::TextEdit::singleline(&mut v.ip).hint_text("Alamat IP VPN").desired_width(150.0));
+                    if ui.small_button("Hapus").clicked() {
+                        remove = Some(i);
+                    }
+                });
+            }
+            if let Some(i) = remove {
+                ed.vpn.remove(i);
+            }
+            ui.horizontal_wrapped(|ui| {
+                match &ed.peers {
+                    None => {
+                        ui.spinner();
+                        ui.label(RichText::new("Mencari perangkat di Netbird/Tailscale…").weak());
+                    }
+                    Some(peers) if peers.is_empty() => {}
+                    Some(peers) => {
+                        let mut picked = None;
+                        egui::ComboBox::from_id_salt("peers")
+                            .selected_text("Pilih servermu dari VPN…")
+                            .width(220.0)
+                            .show_ui(ui, |ui| {
+                                for p in peers {
+                                    if ui.selectable_label(false, format!("{} ({}, {})", p.name, p.vpn, p.ip)).clicked() {
+                                        picked = Some(p.clone());
                                     }
-                                });
-                            if let Some(p) = picked {
-                                if ed.name.is_empty() {
-                                    ed.name = sanitize_label(&p.name);
                                 }
-                                if !ed.vpn.iter().any(|v| v.ip == p.ip) {
-                                    ed.vpn.push(VpnTarget { label: p.vpn.into(), ip: p.ip });
-                                }
+                            });
+                        if let Some(p) = picked {
+                            if ed.name.is_empty() {
+                                ed.name = sanitize_label(&p.name);
+                            }
+                            if !ed.vpn.iter().any(|v| v.ip == p.ip) {
+                                ed.vpn.push(VpnTarget { label: p.vpn.into(), ip: p.ip });
                             }
                         }
                     }
-                    if ui.button("+ Isi manual").clicked() {
-                        ed.vpn.push(VpnTarget { label: "VPN".into(), ip: String::new() });
-                    }
-                });
-            });
-            ui.end_row();
-
-            ui.label("Port web");
-            ui.vertical(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut ed.web_port).hint_text("mis. 3002 (boleh kosong)").desired_width(170.0));
-                let host = if ed.name.trim().is_empty() { "nama".to_string() } else { ed.name.trim().to_string() };
-                let port = ed.web_port.trim().parse::<u16>().ok().filter(|&p| p != 0);
-                let hint = match port {
-                    Some(443) => "443 adalah port HTTPS. Isi port tempat aplikasi web berjalan di server (mis. 80, 3000, 8080). HTTPS dibuat otomatis oleh lodo.".to_string(),
-                    Some(80) => "Aplikasi web di port 80 (bawaan).".to_string(),
-                    Some(p) => format!("Cukup buka http://{host}.{} tanpa \":{p}\".", config.domain),
-                    None => "Port tempat aplikasi web berjalan di server, mis. 80, 3000, atau 8080.".into(),
-                };
-                let warn = port == Some(443);
-                ui.label(if warn { RichText::new(hint).color(Color32::from_rgb(220, 140, 30)) } else { RichText::new(hint).weak() });
-                if port.is_some_and(|p| p != 443) {
-                    ui.checkbox(&mut ed.https, format!("HTTPS juga: https://{host}.{}", config.domain));
-                } else if port.is_none() {
-                    ui.label(RichText::new("HTTPS (https://) tersedia setelah Port web diisi.").weak());
+                }
+                if ui.button("+ Isi manual").clicked() {
+                    ed.vpn.push(VpnTarget { label: "VPN".into(), ip: String::new() });
                 }
             });
-            ui.end_row();
+            let hint = match &ed.peers {
+                Some(p) if p.is_empty() => "Netbird/Tailscale tidak ditemukan di komputer ini. Kalau pakai VPN lain, isi alamat IP-nya secara manual.",
+                _ if ed.vpn.is_empty() => "Boleh dikosongkan kalau server hanya dipakai di rumah.",
+                _ => "",
+            };
+            if !hint.is_empty() {
+                ui.label(RichText::new(hint).weak());
+            }
         });
 
-        ui.add_space(4.0);
-        egui::CollapsingHeader::new("Lanjutan").default_open(ed.advanced).show(ui, |ui| {
+        // ---- 3. Halaman web
+        card(ui, |ui| {
+            step(ui, 3, "Punya halaman web? (opsional)");
+            ui.label(RichText::new("Misalnya Gitea, NAS, atau Home Assistant yang dibuka lewat browser.").weak());
+            let host = if ed.name.trim().is_empty() { "nama".to_string() } else { ed.name.trim().to_string() };
+            let ips: Vec<std::net::IpAddr> = ed.to_server().candidates().into_iter().map(|(_, ip)| ip).collect();
+            ui.horizontal(|ui| {
+                let scanning = ed.scan_task.is_some();
+                if ui
+                    .add_enabled(!scanning && !ips.is_empty(), egui::Button::new("Cari otomatis"))
+                    .on_disabled_hover_text("Isi alamat IP server dulu (langkah 2)")
+                    .clicked()
+                {
+                    ed.scan = None;
+                    ed.scan_task = Some(spawn_task(&ctx, move || scan_web(&ips)));
+                }
+                if scanning {
+                    ui.spinner();
+                    ui.label(RichText::new("Mencari halaman web di server…").weak());
+                }
+            });
+            if let Some(scan) = ed.scan.clone() {
+                if !scan.reached {
+                    ui.label(RichText::new("Server tidak terjangkau dari sini. Pastikan alamat IP benar, dan kamu sedang di rumah atau VPN menyala.").color(ORANGE));
+                } else if scan.apps.is_empty() {
+                    ui.label(RichText::new("Tidak ada halaman web yang ditemukan. Kalau tahu nomor port-nya, isi di bawah.").weak());
+                } else {
+                    ui.label(RichText::new("Ditemukan. Pilih yang ingin dibuka lewat alamat ini:").weak());
+                    for app in &scan.apps {
+                        let selected = ed.web_port.trim() == app.port.to_string();
+                        let text = if app.title.is_empty() {
+                            format!("Halaman web di port {}", app.port)
+                        } else {
+                            format!("{}  (port {})", app.title, app.port)
+                        };
+                        if ui.selectable_label(selected, text).clicked() {
+                            ed.pick_web(app.port, scan.ssh);
+                        }
+                    }
+                }
+            }
+            ui.horizontal(|ui| {
+                ui.label("Nomor port");
+                ui.add(egui::TextEdit::singleline(&mut ed.web_port).hint_text("kosong").desired_width(80.0));
+            });
+            let port = ed.web_port.trim().parse::<u16>().ok().filter(|&p| p != 0);
+            if port == Some(443) {
+                ui.label(
+                    RichText::new("443 adalah port https. Isi port tempat halaman web berjalan di server (mis. 80, 3000, 8080), atau klik Cari otomatis. https:// dibuat otomatis oleh lodo.")
+                        .color(ORANGE),
+                );
+            } else if !ed.web_port.trim().is_empty() && port.is_none() {
+                ui.label(RichText::new("Nomor port berupa angka, mis. 80 atau 3000.").color(ORANGE));
+            } else if port.is_some() {
+                ui.checkbox(&mut ed.https, "Pakai https:// (koneksi aman)");
+                let scheme = if ed.https { "https" } else { "http" };
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("Nanti dibuka di:").weak());
+                    ui.label(RichText::new(format!("{scheme}://{host}.{}", config.domain)).strong().color(ACCENT));
+                });
+            } else {
+                ui.label(RichText::new("Kosongkan kalau server tidak punya halaman web.").weak());
+            }
+        });
+
+        egui::CollapsingHeader::new("Pengaturan lanjutan").default_open(ed.advanced).show(ui, |ui| {
             ed.advanced = true;
             egui::Grid::new("adv").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
                 ui.label("Port untuk tes");
                 ui.vertical(|ui| {
                     ui.add(egui::TextEdit::singleline(&mut ed.port).desired_width(70.0));
-                    ui.label(RichText::new("22 = SSH/git. Pakai 80 atau 443 untuk server web.").weak());
+                    ui.label(RichText::new("Port yang dicoba lodo untuk tahu server bisa dijangkau. 22 = SSH.").weak());
                 });
                 ui.end_row();
                 ui.label("Nama lain");
@@ -562,10 +734,10 @@ impl App {
                     ui.label("Port lain");
                     ui.vertical(|ui| {
                         ui.add(egui::TextEdit::singleline(&mut ed.extra_ports).hint_text("mis. 2222, 5432").desired_width(220.0));
-                        let fwd: Vec<String> = ed.to_server().forwards().iter().skip(1).map(|(p, _)| p.to_string()).collect();
+                        let fwd: Vec<String> = ed.to_server().forwards().iter().map(|(p, _)| p.to_string()).collect();
                         ui.label(
                             RichText::new(format!(
-                                "Karena port web diisi, hanya port tertentu yang diteruskan. Sekarang: 80, {}. Tambahkan port lain yang kamu pakai.",
+                                "Kalau halaman web diisi, hanya port tertentu yang tersambung. Sekarang: {}. Tambahkan port lain yang kamu pakai.",
                                 fwd.join(", ")
                             ))
                             .weak(),
@@ -576,10 +748,14 @@ impl App {
             });
         });
 
-        ui.add_space(8.0);
+        ui.add_space(4.0);
         ui.horizontal(|ui| {
             let testing = ed.test_task.is_some();
-            if ui.add_enabled(!testing, egui::Button::new("Tes koneksi")).clicked() {
+            if ui
+                .add_enabled(!testing, egui::Button::new("Tes koneksi"))
+                .on_hover_text("Coba sambungkan ke server sekarang lewat tiap jalur")
+                .clicked()
+            {
                 let s = ed.to_server();
                 ed.test = None;
                 ed.test_task = Some(spawn_task(&ctx, move || {
@@ -595,44 +771,79 @@ impl App {
         });
         if let Some(results) = &ed.test {
             if results.is_empty() {
-                ui.label(RichText::new("Isi minimal satu IP yang valid dulu.").weak());
+                ui.label(RichText::new("Isi minimal satu alamat IP yang benar dulu.").weak());
             }
             for (label, ip, ok) in results {
-                let (c, mark) = if *ok { (Color32::from_rgb(40, 160, 80), "Bisa") } else { (Color32::from_rgb(220, 60, 50), "Tidak bisa") };
+                let (c, mark) = if *ok { (GREEN, "Tersambung") } else { (RED, "Tidak tersambung") };
                 ui.horizontal(|ui| {
                     dot(ui, c);
-                    ui.label(RichText::new(format!("{mark} dijangkau lewat {label} ({ip})")).color(c));
+                    ui.label(RichText::new(format!("{mark} lewat {label}")).color(c));
+                    ui.label(RichText::new(ip).weak().small());
                 });
             }
         }
 
         if let Some(e) = &ed.error {
             ui.add_space(4.0);
-            ui.label(RichText::new(e).color(Color32::from_rgb(220, 60, 50)));
+            ui.label(RichText::new(e).color(RED));
         }
 
-        ui.add_space(10.0);
-        let mut next = None;
+        ui.add_space(8.0);
+        let mut delete = false;
         ui.horizontal(|ui| {
-            if ui.button(RichText::new("Simpan").strong()).clicked() {
-                let mut c = config.clone();
-                let s = ed.to_server();
-                match ed.index {
-                    Some(i) if i < c.servers.len() => c.servers[i] = s,
-                    _ => c.servers.push(s),
-                }
-                match self.save_config(c) {
-                    Ok(()) => {
-                        self.message = Some((false, "Tersimpan. lodo akan memilih jalur terbaik otomatis.".into()));
-                        next = Some(Screen::Main);
+            if primary(ui, "Simpan").clicked() {
+                if ed.name.trim().is_empty() {
+                    ed.error = Some("Beri nama server dulu (langkah 1).".into());
+                } else if ed.home_ip.trim().is_empty() {
+                    ed.error = Some("Isi alamat IP server saat di rumah (langkah 2).".into());
+                } else {
+                    let mut c = config.clone();
+                    let s = ed.to_server();
+                    match ed.index {
+                        Some(i) if i < c.servers.len() => c.servers[i] = s,
+                        _ => c.servers.push(s),
                     }
-                    Err(e) => ed.error = Some(e),
+                    match self.save_config(c) {
+                        Ok(()) => {
+                            self.message = Some((false, "Tersimpan. lodo akan memilih jalur terbaik otomatis.".into()));
+                            next = Some(Screen::Main);
+                        }
+                        Err(e) => ed.error = Some(e),
+                    }
                 }
             }
             if ui.button("Batal").clicked() {
                 next = Some(Screen::Main);
             }
+            if ed.index.is_some() {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ed.confirm_delete {
+                        if ui.button(RichText::new("Ya, hapus").color(RED)).clicked() {
+                            delete = true;
+                        }
+                        if ui.button("Tidak jadi").clicked() {
+                            ed.confirm_delete = false;
+                        }
+                        ui.label("Hapus server ini?");
+                    } else if ui.button(RichText::new("Hapus server").color(RED)).clicked() {
+                        ed.confirm_delete = true;
+                    }
+                });
+            }
         });
+        if delete && let Some(i) = ed.index {
+            let mut c = config.clone();
+            if i < c.servers.len() {
+                c.servers.remove(i);
+            }
+            match self.save_config(c) {
+                Ok(()) => {
+                    self.message = Some((false, "Server dihapus.".into()));
+                    next = Some(Screen::Main);
+                }
+                Err(e) => ed.error = Some(e),
+            }
+        }
         next.unwrap_or(Screen::Edit(ed))
     }
 
@@ -641,11 +852,17 @@ impl App {
         let Some(config) = self.config.clone() else { return Screen::Main };
         let mut next = None;
 
-        ui.label(RichText::new("Pengaturan").size(19.0).strong());
-        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            if ui.button("Kembali").clicked() {
+                next = Some(Screen::Main);
+            }
+            ui.label(RichText::new("Pengaturan").size(19.0).strong());
+        });
+        ui.add_space(2.0);
 
         card(ui, |ui| {
             ui.label(RichText::new("Akhiran alamat").strong());
+            ui.label(RichText::new("Bagian belakang semua alamat servermu. Biarkan apa adanya kalau ragu.").weak());
             ui.horizontal(|ui| {
                 ui.label("server.");
                 ui.add(egui::TextEdit::singleline(&mut st.domain).desired_width(200.0));
@@ -653,8 +870,8 @@ impl App {
             let d = st.domain.trim().trim_end_matches('.').to_ascii_lowercase();
             let check = domain::validate_suffix(&d);
             match &check {
-                Ok(()) => ui.label(RichText::new(format!("Aman, tidak bentrok dengan internet. Contoh: git.{d}")).color(Color32::from_rgb(40, 160, 80))),
-                Err(e) => ui.label(RichText::new(e.as_str()).color(Color32::from_rgb(220, 60, 50))),
+                Ok(()) => ui.label(RichText::new(format!("Aman, tidak bentrok dengan internet. Contoh: git.{d}")).color(GREEN)),
+                Err(e) => ui.label(RichText::new(e.as_str()).color(RED)),
             };
             ui.label(RichText::new("Rekomendasi: home.arpa (khusus jaringan rumah), internal, atau lan.").weak());
             let changed = d != config.domain;
@@ -669,15 +886,15 @@ impl App {
         });
 
         card(ui, |ui| {
-            ui.label(RichText::new("HTTPS lokal").strong());
+            ui.label(RichText::new("Koneksi aman (https://)").strong());
             let trusted = self.live.lock().unwrap().https_trusted;
             let with_https: Vec<String> =
                 config.servers.iter().filter(|s| s.https_target().is_some()).map(|s| s.fqdn(&config.domain)).collect();
             match trusted {
                 Some(true) => {
                     ui.horizontal_wrapped(|ui| {
-                        dot(ui, Color32::from_rgb(40, 160, 80));
-                        ui.label("Aktif. Sertifikat lodo dipercaya di komputer ini.");
+                        dot(ui, GREEN);
+                        ui.label("Aktif. Alamat lodo bisa dibuka dengan https:// tanpa peringatan.");
                     });
                 }
                 Some(false) => {
@@ -690,19 +907,19 @@ impl App {
                             ui.spinner();
                             ui.label("Menunggu izin…");
                         });
-                    } else if ui.button("Aktifkan HTTPS (perlu izin admin)").clicked() {
+                    } else if primary(ui, "Aktifkan").clicked() {
                         self.trust_task = Some(spawn_task(&ctx, helper::trust_ca));
                     }
                 }
                 None => {
-                    ui.label(RichText::new("Belum dipakai. Isi Port web di salah satu server untuk mengaktifkan HTTPS.").weak());
+                    ui.label(RichText::new("Belum dipakai. Isi halaman web di salah satu server (langkah 3 saat menambah server).").weak());
                 }
             }
             if !with_https.is_empty() {
                 ui.label(RichText::new(format!("Dipakai oleh: {}", with_https.join(", "))).weak());
             }
             ui.label(
-                RichText::new("Sertifikatnya hanya berlaku untuk alamat pribadi lodo (mis. .home.arpa), tidak bisa dipakai untuk situs internet.")
+                RichText::new("Hanya berlaku untuk alamat pribadi lodo (mis. .home.arpa), tidak memengaruhi situs internet.")
                     .weak(),
             );
         });
@@ -735,7 +952,7 @@ impl App {
                 } else {
                     match &self.update_result {
                         Some(Ok(Some(m))) => {
-                            ui.label(RichText::new(format!("Versi {} tersedia.", m.version)).color(Color32::from_rgb(40, 160, 80)));
+                            ui.label(RichText::new(format!("Versi {} tersedia.", m.version)).color(GREEN));
                             if updater::can_self_install() {
                                 if ui.button("Perbarui sekarang").clicked() {
                                     if shared::send_line(shared::TRAY_LOCK, "update") {
@@ -752,7 +969,7 @@ impl App {
                             ui.label("Sudah versi terbaru.");
                         }
                         Some(Err(e)) => {
-                            ui.label(RichText::new(e.as_str()).color(Color32::from_rgb(220, 60, 50)));
+                            ui.label(RichText::new(e.as_str()).color(RED));
                         }
                         None => {}
                     }
@@ -765,7 +982,7 @@ impl App {
 
         card(ui, |ui| {
             ui.label(RichText::new("Hapus lodo").strong());
-            ui.label(RichText::new("Menghapus helper dan semua alamat lodo dari sistem.").weak());
+            ui.label(RichText::new("Menghapus lodo dan semua alamatnya dari komputer ini. Servermu tidak terpengaruh.").weak());
             if self.uninstall_task.is_some() {
                 ui.horizontal(|ui| {
                     ui.spinner();
@@ -773,7 +990,7 @@ impl App {
                 });
             } else if st.confirm_uninstall {
                 ui.horizontal(|ui| {
-                    if ui.button(RichText::new("Ya, hapus").color(Color32::from_rgb(220, 60, 50))).clicked() {
+                    if ui.button(RichText::new("Ya, hapus").color(RED)).clicked() {
                         self.uninstall_task = Some(spawn_task(&ctx, helper::uninstall));
                         st.confirm_uninstall = false;
                     }
@@ -781,18 +998,11 @@ impl App {
                         st.confirm_uninstall = false;
                     }
                 });
-            } else if ui.button("Hapus dari sistem…").clicked() {
+            } else if ui.button(RichText::new("Hapus lodo dari komputer ini…").color(RED)).clicked() {
                 st.confirm_uninstall = true;
             }
         });
 
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            if ui.button("Kembali").clicked() {
-                next = Some(Screen::Main);
-            }
-            ui.label(RichText::new(format!("lodo {APP_VERSION}")).weak());
-        });
         next.unwrap_or(Screen::Settings(st))
     }
 }
@@ -819,6 +1029,18 @@ impl Editor {
             peers_task,
             test: None,
             test_task: None,
+            scan: None,
+            scan_task: None,
+            confirm_delete: false,
+        }
+    }
+
+    /// Pilih halaman web di `port`. Kalau SSH tidak ada dan port tes masih bawaan,
+    /// pakai port web juga untuk tes, supaya server tidak dianggap mati.
+    fn pick_web(&mut self, port: u16, ssh: bool) {
+        self.web_port = port.to_string();
+        if !ssh && self.port.trim() == lodo_core::model::DEFAULT_PORT.to_string() {
+            self.port = port.to_string();
         }
     }
 
@@ -862,19 +1084,46 @@ fn route_label(r: &Route) -> String {
     }
 }
 
-fn route_text(st: Option<&ServerStatus>) -> (Color32, String) {
+/// (warna, kalimat status, alamat IP yang sedang dipakai)
+fn route_text(st: Option<&ServerStatus>) -> (Color32, String, Option<String>) {
     let rgb = |m: Mood| {
         let [r, g, b] = m.rgb();
         Color32::from_rgb(r, g, b)
     };
     match st {
-        Some(ServerStatus { route: Route::Home, ip: Some(ip), .. }) => (rgb(Mood::Home), format!("{ip} · jaringan rumah")),
-        Some(ServerStatus { route: Route::Vpn(v), ip: Some(ip), .. }) => (rgb(Mood::Vpn), format!("{ip} · lewat {v}")),
+        Some(ServerStatus { route: Route::Home, ip, .. }) => (rgb(Mood::Home), "Tersambung lewat jaringan rumah".into(), ip.clone()),
+        Some(ServerStatus { route: Route::Vpn(v), ip, .. }) => (rgb(Mood::Vpn), format!("Tersambung lewat {v}"), ip.clone()),
         Some(ServerStatus { route: Route::Unreachable, .. }) => {
-            (rgb(Mood::Down), "Tidak terjangkau. Cek WiFi atau nyalakan VPN.".into())
+            (rgb(Mood::Down), "Tidak tersambung. Cek WiFi atau nyalakan VPN.".into(), None)
         }
-        _ => (rgb(Mood::Idle), "Sedang mengecek…".into()),
+        _ => (rgb(Mood::Idle), "Sedang mengecek…".into(), None),
     }
+}
+
+/// Tombol utama (aksi yang paling mungkin diinginkan di layar itu).
+fn primary(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    ui.add(egui::Button::new(RichText::new(text).color(Color32::WHITE).strong()).fill(ACCENT))
+}
+
+/// Lingkaran bernomor (digambar, tidak bergantung font).
+fn number(ui: &mut egui::Ui, n: u8) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
+    ui.painter().circle_filled(rect.center(), 11.0, ACCENT);
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        n.to_string(),
+        egui::FontId::proportional(13.0),
+        Color32::WHITE,
+    );
+}
+
+/// Judul langkah di form: nomor + teks.
+fn step(ui: &mut egui::Ui, n: u8, text: &str) {
+    ui.horizontal(|ui| {
+        number(ui, n);
+        ui.label(RichText::new(text).size(16.0).strong());
+    });
 }
 
 /// Nama hanya boleh huruf kecil, angka, dan tanda minus.
@@ -894,9 +1143,12 @@ fn dot(ui: &mut egui::Ui, color: Color32) {
 }
 
 fn card<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    let r = egui::Frame::group(ui.style())
-        .corner_radius(10.0)
-        .inner_margin(12.0)
+    let dark = ui.visuals().dark_mode;
+    let r = egui::Frame::new()
+        .fill(if dark { Color32::from_gray(38) } else { Color32::WHITE })
+        .stroke(egui::Stroke::new(1.0, if dark { Color32::from_gray(58) } else { Color32::from_gray(226) }))
+        .corner_radius(12.0)
+        .inner_margin(14.0)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             add(ui)
@@ -914,8 +1166,20 @@ fn style(ctx: &egui::Context) {
         s.text_styles.insert(TextStyle::Heading, FontId::proportional(24.0));
         s.text_styles.insert(TextStyle::Small, FontId::proportional(12.0));
         s.spacing.item_spacing = egui::vec2(8.0, 8.0);
-        s.spacing.button_padding = egui::vec2(12.0, 6.0);
-        s.spacing.interact_size.y = 28.0;
+        s.spacing.button_padding = egui::vec2(14.0, 7.0);
+        s.spacing.interact_size.y = 30.0;
+        let radius = egui::CornerRadius::same(8);
+        for w in [
+            &mut s.visuals.widgets.noninteractive,
+            &mut s.visuals.widgets.inactive,
+            &mut s.visuals.widgets.hovered,
+            &mut s.visuals.widgets.active,
+            &mut s.visuals.widgets.open,
+        ] {
+            w.corner_radius = radius;
+        }
+        s.visuals.hyperlink_color = ACCENT;
+        s.visuals.selection.bg_fill = ACCENT.gamma_multiply(0.35);
     });
 }
 

@@ -17,7 +17,7 @@ Tidak perlu ganti remote git, config ssh, atau bookmark lagi tiap pindah tempat.
    - **Nama**: mis. `git`, jadi alamatnya `git.home.arpa`
    - **IP di rumah**: mis. `192.168.1.10`
    - **IP lewat VPN**: pilih dari daftar Netbird/Tailscale (terdeteksi otomatis), atau klik **+ Isi manual**
-   - **Port web** (boleh kosong): kalau aplikasi webnya jalan di port lain, mis. Gitea di `3002`, isi `3002`. Setelah itu cukup buka `http://git.home.arpa` tanpa `:3002`, atau klik **Buka**.
+   - **Halaman web** (opsional): klik **Cari otomatis** dan pilih aplikasinya (mis. Gitea), atau isi nomor port-nya sendiri, mis. `3002`. Setelah itu cukup buka `http://git.home.arpa` tanpa `:3002`, atau klik **Buka**.
      Centang **HTTPS juga** (aktif secara default) supaya `https://git.home.arpa` juga bisa dibuka. Pertama kali, klik **Aktifkan HTTPS** di layar utama lalu masukkan password. Ini cuma sekali.
    - Klik **Tes koneksi** untuk melihat jalur mana yang bisa dipakai sekarang.
 4. Selesai. Pakai alamatnya di mana saja:
