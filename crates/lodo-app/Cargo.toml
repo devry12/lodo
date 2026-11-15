@@ -1,0 +1,29 @@
+[package]
+name = "lodo-app"
+version = "0.1.0"
+edition = "2024"
+description = "Satu alamat untuk server rumah, di rumah atau di luar"
+
+[[bin]]
+name = "lodo"
+path = "src/main.rs"
+
+[dependencies]
+lodo-core = { path = "../lodo-core" }
+eframe = { version = "0.37.0", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
+tray-icon = { version = "0.26.1", default-features = false, features = ["ksni"] }
+notify-rust = "4.19.0"
+auto-launch = "0.6.0"
+winit = "0.30"
+
+# Installer: `cargo packager --release` (dari folder crates/lodo-app)
+[package.metadata.packager]
+product-name = "lodo"
+identifier = "id.lodo.app"
+category = "Utility"
+description = "Satu alamat untuk server rumah, di rumah atau di luar"
+before-packaging-command = "cargo build --release -p lodo-app -p lodo-helper"
+binaries-dir = "../../target/release"
+out-dir = "../../dist"
+binaries = [{ path = "lodo", main = true }, { path = "lodo-helper", main = false }]
+formats = ["app", "dmg", "nsis", "deb", "appimage"]

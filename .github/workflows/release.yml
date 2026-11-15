@@ -1,0 +1,43 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libgl1-mesa-dev libdbus-1-dev
+      - run: cargo test --workspace
+
+  package:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+          - os: windows-latest
+          - os: ubuntu-22.04
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libgl1-mesa-dev libdbus-1-dev
+      - run: cargo install cargo-packager --locked
+      - run: cargo packager --release
+        working-directory: crates/lodo-app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lodo-${{ matrix.os }}
+          path: |
+            dist/*.dmg
+            dist/*-setup.exe
+            dist/*.deb
+            dist/*.AppImage
