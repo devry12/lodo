@@ -95,14 +95,16 @@ async function landing(env) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>lodo · one address for your home server</title>
 <meta name="description" content="lodo picks the route to your home server automatically: your LAN IP at home, your VPN when you are away.">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512"%3E%3Cdefs%3E%3ClinearGradient id="bg" x1="0" y1="0" x2="0" y2="1"%3E%3Cstop offset="0" stop-color="#1B2A41"/%3E%3Cstop offset="1" stop-color="#0E1726"/%3E%3C/linearGradient%3E%3ClinearGradient id="roof" gradientUnits="userSpaceOnUse" x1="112" y1="0" x2="400" y2="0"%3E%3Cstop offset="0.5" stop-color="#34C759"/%3E%3Cstop offset="0.5" stop-color="#0A84FF"/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x="0" y="0" width="512" height="512" rx="114" fill="url(#bg)"/%3E%3Cpath d="M112 300 L256 160 L400 300" fill="none" stroke="url(#roof)" stroke-width="46" stroke-linecap="round" stroke-linejoin="round"/%3E%3Ccircle cx="256" cy="338" r="46" fill="#FFFFFF"/%3E%3C/svg%3E">
 <style>
 :root{--bg:#f6f6f3;--card:#fff;--fg:#1c1c1e;--muted:#6b6b70;--line:#e3e3df;--accent:#0a84ff;--home:#34c759}
 @media (prefers-color-scheme:dark){:root{--bg:#141415;--card:#1d1d1f;--fg:#f2f2f2;--muted:#9a9aa0;--line:#2c2c2f;--accent:#409cff}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
 main{max-width:720px;margin:0 auto;padding:56px 16px 40px}
-h1{font-size:44px;line-height:1;margin:0 0 6px;letter-spacing:-.02em;display:flex;align-items:center;gap:12px}
-h1 i{width:18px;height:18px;border-radius:50%;background:var(--home);display:inline-block}
+h1{margin:0 0 10px;display:flex;align-items:center;gap:14px;color:var(--fg)}
+h1 .mark{width:56px;height:56px;flex:none}
+h1 .word{height:44px;width:auto}
 .lead{font-size:20px;color:var(--muted);margin:0 0 32px}
 .addr{font:600 15px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:0 0 32px}
 .addr span{color:var(--muted);font-weight:400}
@@ -124,7 +126,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.92em}
 </head>
 <body>
 <main>
-<h1><i></i>lodo</h1>
+<h1><svg class="mark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" aria-hidden="true"><defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1B2A41"/><stop offset="1" stop-color="#0E1726"/></linearGradient><linearGradient id="roof" gradientUnits="userSpaceOnUse" x1="112" y1="0" x2="400" y2="0"><stop offset="0.5" stop-color="#34C759"/><stop offset="0.5" stop-color="#0A84FF"/></linearGradient></defs><rect x="0" y="0" width="512" height="512" rx="114" fill="url(#bg)"/><path d="M112 300 L256 160 L400 300" fill="none" stroke="url(#roof)" stroke-width="46" stroke-linecap="round" stroke-linejoin="round"/><circle cx="256" cy="338" r="46" fill="#FFFFFF"/></svg><svg class="word" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 190" role="img" aria-label="lodo"><g fill="none" stroke="currentColor" stroke-width="28" stroke-linecap="round"><path d="M28 34 V156"/><circle cx="116" cy="120" r="36"/><circle cx="240" cy="120" r="36"/><path d="M276 34 V156"/><circle cx="364" cy="120" r="36"/></g></svg></h1>
 <p class="lead">One address for your home server, at home or on the go.</p>
 
 <div class="addr">git.home.arpa <span>at home → 192.168.1.10</span>

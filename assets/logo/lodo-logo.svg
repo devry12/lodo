@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 220" width="680" height="220">
+  <!-- Logo lodo (mark + wordmark). Orisinal, dibuat dari bentuk geometri dasar. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1B2A41"/>
+      <stop offset="1" stop-color="#0E1726"/>
+    </linearGradient>
+      <linearGradient id="roof" gradientUnits="userSpaceOnUse" x1="112" y1="0" x2="400" y2="0">
+      <stop offset="0.5" stop-color="#34C759"/>
+      <stop offset="0.5" stop-color="#0A84FF"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(10 10) scale(0.390625)">
+  <rect x="0" y="0" width="512" height="512" rx="114" fill="url(#bg)"/>
+  <path d="M112 300 L256 160 L400 300" fill="none" stroke="url(#roof)" stroke-width="46" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="256" cy="338" r="46" fill="#FFFFFF"/>
+</g>
+  <g transform="translate(232 18)">
+  <g fill="none" stroke="#0E1726" stroke-width="28" stroke-linecap="round">
+    <path d="M28 34 V156"/>
+    <circle cx="116" cy="120" r="36"/>
+    <circle cx="240" cy="120" r="36"/>
+    <path d="M276 34 V156"/>
+    <circle cx="364" cy="120" r="36"/>
+  </g>
+</g>
+</svg>

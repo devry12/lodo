@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Ikon aplikasi: mark lodo dengan jarak tepi standar ikon desktop (80% kanvas). -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1B2A41"/>
+      <stop offset="1" stop-color="#0E1726"/>
+    </linearGradient>
+    <linearGradient id="roof" gradientUnits="userSpaceOnUse" x1="112" y1="0" x2="400" y2="0">
+      <stop offset="0.5" stop-color="#34C759"/>
+      <stop offset="0.5" stop-color="#0A84FF"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(51.2 51.2) scale(0.8)">
+  <rect x="0" y="0" width="512" height="512" rx="114" fill="url(#bg)"/>
+  <path d="M112 300 L256 160 L400 300" fill="none" stroke="url(#roof)" stroke-width="46" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="256" cy="338" r="46" fill="#FFFFFF"/>
+</g>
+</svg>

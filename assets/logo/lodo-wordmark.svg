@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 190" width="440" height="190">
+  <!-- "lodo" dari bentuk geometri dasar (tanpa font). Ganti #0E1726 jadi #FFFFFF untuk latar gelap. -->
+  <g fill="none" stroke="#0E1726" stroke-width="28" stroke-linecap="round">
+    <path d="M28 34 V156"/>
+    <circle cx="116" cy="120" r="36"/>
+    <circle cx="240" cy="120" r="36"/>
+    <path d="M276 34 V156"/>
+    <circle cx="364" cy="120" r="36"/>
+  </g>
+</svg>

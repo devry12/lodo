@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo/lodo-logo.png" alt="lodo" width="340"></p>
+
 # lodo
 
 Satu alamat tetap untuk server rumah, di rumah maupun di luar.
