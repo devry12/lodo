@@ -1,12 +1,12 @@
-// Server rilis lodo (Cloudflare Worker + R2).
+// lodo release server (Cloudflare Worker + R2).
 //
-//   /                    halaman unduhan
-//   /latest.json         manifest versi terbaru (ditandatangani, lihat latest.json.sig)
+//   /                    download page
+//   /latest.json         latest release manifest (signed, see latest.json.sig)
 //   /latest.json.sig
-//   /releases/<v>/<f>    file rilis (tidak pernah berubah, boleh di-cache lama)
-//   /download/<os>       arahkan ke file terbaru: mac | windows | linux | deb
+//   /releases/<v>/<f>    release files (immutable, cached for a long time)
+//   /download/<os>       redirect to the latest file: mac | windows | linux | deb
 //
-// Worker ini hanya membaca dari R2. File diunggah oleh CI / scripts/publish.sh.
+// This Worker only reads from R2. Files are uploaded by CI / scripts/publish.sh.
 
 const SHORT = "public, max-age=60";
 const FOREVER = "public, max-age=31536000, immutable";
@@ -34,10 +34,10 @@ export default {
     if (dl) {
       const m = await manifest(env);
       const key = m && DOWNLOADS[dl[1]].find((k) => m.assets[k]);
-      if (!key) return new Response("Belum tersedia untuk sistem ini.", { status: 404 });
+      if (!key) return new Response("Not available for this platform yet.", { status: 404 });
       return Response.redirect(new URL("/" + m.assets[key].url, url).toString(), 302);
     }
-    return new Response("Tidak ditemukan.", { status: 404 });
+    return new Response("Not found.", { status: 404 });
   },
 };
 
@@ -48,7 +48,7 @@ async function manifest(env) {
 
 async function object(env, request, key, cache) {
   const obj = await env.RELEASES.get(key, { range: request.headers, onlyIf: request.headers });
-  if (!obj) return new Response("Tidak ditemukan.", { status: 404 });
+  if (!obj) return new Response("Not found.", { status: 404 });
   const headers = new Headers();
   obj.writeHttpMetadata(headers);
   headers.set("etag", obj.httpEtag);
@@ -59,9 +59,9 @@ async function object(env, request, key, cache) {
   if (key.startsWith("releases/")) {
     headers.set("content-disposition", `attachment; filename="${key.split("/").pop()}"`);
   }
-  // onlyIf tidak terpenuhi -> objek tanpa body.
+  // onlyIf precondition failed -> object without a body.
   if (!("body" in obj)) return new Response(null, { status: 304, headers });
-  // R2 selalu mengisi obj.range; hanya balas 206 kalau klien memang minta Range.
+  // R2 always sets obj.range; only answer 206 when the client sent a Range header.
   if (request.headers.has("range") && obj.range && "offset" in obj.range) {
     const end = obj.range.offset + obj.range.length - 1;
     headers.set("content-range", `bytes ${obj.range.offset}-${end}/${obj.size}`);
@@ -86,15 +86,15 @@ async function landing(env) {
   const btn = (os, label, asset, note) =>
     asset
       ? `<a class="dl" data-os="${os}" href="/download/${os}"><span class="os">${label}</span><span class="meta">${esc(note)} · ${mb(asset)}</span></a>`
-      : `<span class="dl off"><span class="os">${label}</span><span class="meta">segera</span></span>`;
+      : `<span class="dl off"><span class="os">${label}</span><span class="meta">coming soon</span></span>`;
 
   const html = `<!doctype html>
-<html lang="id">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>lodo · satu alamat untuk server rumah</title>
-<meta name="description" content="lodo memilih jalur ke server rumahmu secara otomatis: IP rumah saat di rumah, VPN saat di luar.">
+<title>lodo · one address for your home server</title>
+<meta name="description" content="lodo picks the route to your home server automatically: your LAN IP at home, your VPN when you are away.">
 <style>
 :root{--bg:#f6f6f3;--card:#fff;--fg:#1c1c1e;--muted:#6b6b70;--line:#e3e3df;--accent:#0a84ff;--home:#34c759}
 @media (prefers-color-scheme:dark){:root{--bg:#141415;--card:#1d1d1f;--fg:#f2f2f2;--muted:#9a9aa0;--line:#2c2c2f;--accent:#409cff}}
@@ -125,26 +125,26 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.92em}
 <body>
 <main>
 <h1><i></i>lodo</h1>
-<p class="lead">Satu alamat untuk server rumah, di rumah maupun di luar.</p>
+<p class="lead">One address for your home server, at home or on the go.</p>
 
-<div class="addr">git.home.arpa <span>di rumah → 192.168.1.10</span>
-git.home.arpa <span>di luar → lewat Netbird / Tailscale</span></div>
+<div class="addr">git.home.arpa <span>at home → 192.168.1.10</span>
+git.home.arpa <span>away → via Netbird / Tailscale</span></div>
 
 <div class="grid">
 ${btn("mac", "macOS", mac, "Apple Silicon")}
 ${btn("windows", "Windows", win, "64-bit")}
 ${btn("linux", "Linux", lin, "AppImage")}
 </div>
-<p class="ver">${m ? `Versi ${esc(m.version)}${m.date ? " · " + esc(m.date) : ""}${deb ? ` · <a href="/download/deb">.deb untuk Ubuntu/Debian</a> (${mb(deb)})` : ""}` : "Belum ada rilis."}</p>
+<p class="ver">${m ? `Version ${esc(m.version)}${m.date ? " · " + esc(m.date) : ""}${deb ? ` · <a href="/download/deb">.deb for Ubuntu/Debian</a> (${mb(deb)})` : ""}` : "No release yet."}</p>
 
-<h2>Cara pakai</h2>
+<h2>How it works</h2>
 <ol>
-<li>Pasang lodo, buka, klik <b>Mulai</b>, masukkan password admin sekali.</li>
-<li>Klik <b>Tambah server</b>: isi nama, IP di rumah, dan IP VPN (Netbird/Tailscale terdeteksi otomatis).</li>
-<li>Pakai <code>git.home.arpa</code> di mana saja. lodo memilih jalurnya sendiri dan memperbarui dirinya otomatis.</li>
+<li>Install lodo, open it, click <b>Mulai</b> (Start) and enter your admin password once.</li>
+<li>Click <b>Tambah server</b> (Add server): enter a name, the home IP, and the VPN IP. Netbird and Tailscale peers are detected automatically.</li>
+<li>Use <code>git.home.arpa</code> everywhere: in git, SSH, or your browser, with HTTPS. lodo picks the route on its own and keeps itself up to date.</li>
 </ol>
 
-<footer>Alamat memakai akhiran khusus jaringan pribadi seperti <code>home.arpa</code>, jadi tidak bentrok dengan situs internet mana pun.</footer>
+<footer>Addresses use suffixes reserved for private networks, such as <code>home.arpa</code>, so they never clash with real websites. lodo is <a href="https://github.com/devry12/lodo">open source</a> (MIT).</footer>
 </main>
 <script>
 (function(){var u=navigator.userAgent,os=/Mac/.test(u)?"mac":/Win/.test(u)?"windows":/Linux/.test(u)?"linux":"";

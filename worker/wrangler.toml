@@ -1,4 +1,4 @@
-# Server rilis lodo: halaman unduhan + file pembaruan dari R2.
+# lodo release server: download page + update files from R2.
 # Deploy: cd worker && npx wrangler@4 deploy
 name = "lodo"
 main = "src/index.js"
