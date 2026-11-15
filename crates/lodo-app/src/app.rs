@@ -351,6 +351,16 @@ impl App {
                                 dot(ui, color);
                                 ui.label(RichText::new(text).color(color));
                             });
+                            if s.web_port.is_some_and(|p| p != 0 && p != 80) {
+                                let https = s.https_target().is_some() && https_trusted == Some(true);
+                                let url = format!("{}://{fqdn}", if https { "https" } else { "http" });
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(RichText::new(url).weak());
+                                    if https {
+                                        ui.label(RichText::new("HTTPS").small().color(Color32::from_rgb(40, 160, 80)));
+                                    }
+                                });
+                            }
                         });
                     },
                     |ui| {
@@ -521,6 +531,8 @@ impl App {
                 ui.label(RichText::new(hint).weak());
                 if matches!(ed.web_port.trim().parse::<u16>(), Ok(p) if p != 80 && p != 0) {
                     ui.checkbox(&mut ed.https, format!("HTTPS juga: https://{host}.{}", config.domain));
+                } else {
+                    ui.label(RichText::new("HTTPS (https://) tersedia setelah Port web diisi.").weak());
                 }
             });
             ui.end_row();
@@ -650,6 +662,45 @@ impl App {
                     Err(e) => self.message = Some((true, e)),
                 }
             }
+        });
+
+        card(ui, |ui| {
+            ui.label(RichText::new("HTTPS lokal").strong());
+            let trusted = self.live.lock().unwrap().https_trusted;
+            let with_https: Vec<String> =
+                config.servers.iter().filter(|s| s.https_target().is_some()).map(|s| s.fqdn(&config.domain)).collect();
+            match trusted {
+                Some(true) => {
+                    ui.horizontal_wrapped(|ui| {
+                        dot(ui, Color32::from_rgb(40, 160, 80));
+                        ui.label("Aktif. Sertifikat lodo dipercaya di komputer ini.");
+                    });
+                }
+                Some(false) => {
+                    ui.horizontal_wrapped(|ui| {
+                        dot(ui, Color32::from_rgb(230, 150, 30));
+                        ui.label("Belum aktif di komputer ini.");
+                    });
+                    if self.trust_task.is_some() {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label("Menunggu izin…");
+                        });
+                    } else if ui.button("Aktifkan HTTPS (perlu izin admin)").clicked() {
+                        self.trust_task = Some(spawn_task(&ctx, helper::trust_ca));
+                    }
+                }
+                None => {
+                    ui.label(RichText::new("Belum dipakai. Isi Port web di salah satu server untuk mengaktifkan HTTPS.").weak());
+                }
+            }
+            if !with_https.is_empty() {
+                ui.label(RichText::new(format!("Dipakai oleh: {}", with_https.join(", "))).weak());
+            }
+            ui.label(
+                RichText::new("Sertifikatnya hanya berlaku untuk alamat pribadi lodo (mis. .home.arpa), tidak bisa dipakai untuk situs internet.")
+                    .weak(),
+            );
         });
 
         card(ui, |ui| {

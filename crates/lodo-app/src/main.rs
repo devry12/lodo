@@ -47,8 +47,10 @@ fn update_cli() {
 
 fn run_window() {
     // Hanya satu jendela. Kalau sudah ada, fokuskan yang itu.
-    let Ok(listener) = std::net::TcpListener::bind(shared::WINDOW_LOCK) else {
-        shared::poke(shared::WINDOW_LOCK);
+    // LODO_WINDOW_LOCK: jalankan jendela kedua untuk debug tanpa mengganggu yang terbuka.
+    let lock = std::env::var("LODO_WINDOW_LOCK").unwrap_or_else(|_| shared::WINDOW_LOCK.into());
+    let Ok(listener) = std::net::TcpListener::bind(&lock) else {
+        shared::poke(&lock);
         return;
     };
     let options = eframe::NativeOptions {
