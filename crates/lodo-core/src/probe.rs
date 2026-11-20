@@ -43,9 +43,9 @@ pub fn answer(ip: IpAddr, port: u16, connect_timeout: Duration) -> Answer {
     };
     let mut buf = [0u8; 64];
     let _ = s.set_read_timeout(Some(GREETING_WAIT));
-    match read_answer(&mut s, &mut buf) {
-        Some(a) => return a,
-        None => {} // diam: mungkin protokol yang menunggu klien
+    // Diam: mungkin protokol yang menunggu klien bicara duluan.
+    if let Some(a) = read_answer(&mut s, &mut buf) {
+        return a;
     }
     if s.write_all(KNOCK).is_err() {
         return Answer::Closed;

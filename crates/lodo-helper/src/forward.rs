@@ -164,8 +164,24 @@ fn pipe_tls(client: TcpStream, target: SocketAddr, cfg: Arc<rustls::ServerConfig
     }
     sock.set_read_timeout(None)?;
 
-    let server = TcpStream::connect_timeout(&target, CONNECT_TIMEOUT)?;
+    let mut server = TcpStream::connect_timeout(&target, CONNECT_TIMEOUT)?;
     let _ = server.set_nodelay(true);
+
+    // Permintaan pertama klien bisa ikut terbaca bersama pesan terakhir handshake.
+    // Teruskan sekarang; kalau tidak, data itu tertahan sampai klien mengirim lagi
+    // (dan klien menunggu jawaban, jadi koneksi macet).
+    let mut early = Vec::new();
+    let client_done = match conn.reader().read_to_end(&mut early) {
+        Ok(_) => true, // klien sudah menutup (close_notify)
+        Err(e) if e.kind() == io::ErrorKind::WouldBlock => false,
+        Err(e) => return Err(e),
+    };
+    if !early.is_empty() {
+        server.write_all(&early)?;
+    }
+    if client_done {
+        let _ = server.shutdown(Shutdown::Write);
+    }
     let conn = Arc::new(Mutex::new(conn));
 
     // Server -> klien: tulis teks biasa ke sesi TLS, kirim rekaman terenkripsi.
