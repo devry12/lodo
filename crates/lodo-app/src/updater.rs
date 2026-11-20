@@ -105,8 +105,27 @@ fn install_platform(archive: &Path, dir: &Path, open_window: bool) -> Result<(),
     }
     let _ = std::fs::remove_dir_all(&old);
     let _ = std::fs::remove_dir_all(dir);
-    let args = if open_window { "" } else { " --args --hidden" };
-    relaunch_unix(&format!("/usr/bin/open -n '{}'{args}", sh_quote(&bundle)))
+    // Minta macOS (LaunchServices) membuka versi baru sekarang. Proses baru itu bukan
+    // anak proses ini, jadi tidak ikut berhenti saat proses ini keluar; ia sendiri
+    // menunggu sampai proses lama selesai (--after-update).
+    if std::env::var_os("LODO_NO_RELAUNCH").is_some() {
+        return Ok(());
+    }
+    let mut cmd = Command::new("/usr/bin/open");
+    cmd.arg("-n");
+    if let Ok(lock) = std::env::var("LODO_TRAY_LOCK") {
+        cmd.args(["--env", &format!("LODO_TRAY_LOCK={lock}")]);
+    }
+    cmd.arg(&bundle).args(["--args", "--after-update"]);
+    if !open_window {
+        cmd.arg("--hidden");
+    }
+    let out = cmd.output().map_err(|e| format!("Couldn't reopen lodo: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!("Couldn't reopen lodo: {}", String::from_utf8_lossy(&out.stderr).trim()))
+    }
 }
 
 #[cfg(windows)]
@@ -139,28 +158,23 @@ fn install_platform(file: &Path, _dir: &Path, open_window: bool) -> Result<(), S
     let staged = target.with_extension("new");
     std::fs::copy(file, &staged).map_err(|_| no_permission(&target))?;
     std::fs::rename(&staged, &target).map_err(|_| no_permission(&target))?;
-    let args = if open_window { "" } else { " --hidden" };
-    relaunch_unix(&format!("'{}'{args}", sh_quote(&target)))
+    if std::env::var_os("LODO_NO_RELAUNCH").is_some() {
+        return Ok(());
+    }
+    // Proses baru di grup prosesnya sendiri, supaya tidak ikut berhenti bersama proses ini.
+    use std::os::unix::process::CommandExt;
+    let mut cmd = Command::new(&target);
+    cmd.arg("--after-update").process_group(0);
+    if !open_window {
+        cmd.arg("--hidden");
+    }
+    cmd.spawn().map(|_| ()).map_err(|e| format!("Couldn't reopen lodo: {e}"))
 }
 
 fn no_permission(p: &Path) -> String {
     format!("No permission to replace {}. Download the new version at {}.", p.display(), download_page())
 }
 
-#[cfg(unix)]
-fn sh_quote(p: &Path) -> String {
-    p.display().to_string().replace('\'', r"'\''")
-}
-
-/// Tunggu proses ini selesai, lalu jalankan `cmd`.
-#[cfg(unix)]
-fn relaunch_unix(cmd: &str) -> Result<(), String> {
-    let script = format!("while kill -0 {} 2>/dev/null; do sleep 0.2; done; {cmd}", std::process::id());
-    if std::env::var_os("LODO_NO_RELAUNCH").is_some() {
-        return Ok(());
-    }
-    Command::new("/bin/sh").args(["-c", &script]).spawn().map(|_| ()).map_err(|e| e.to_string())
-}
 
 #[cfg(target_os = "macos")]
 fn run(cmd: &str, args: &[&str]) -> Result<(), String> {

@@ -21,7 +21,7 @@ fn main() {
     } else if has("--update") {
         update_cli();
     } else {
-        tray_app::run(!has("--hidden"));
+        tray_app::run(!has("--hidden"), has("--after-update"));
     }
 }
 

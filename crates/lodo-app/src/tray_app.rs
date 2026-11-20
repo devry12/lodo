@@ -44,11 +44,23 @@ struct TrayApp {
     updating: bool,
 }
 
-pub fn run(open_window: bool) {
+/// `after_update`: dibuka oleh versi lama yang baru saja memperbarui diri; tunggu
+/// sampai versi lama selesai keluar sebelum mengambil alih.
+pub fn run(open_window: bool, after_update: bool) {
     // Hanya satu tray. Kalau sudah ada, minta tray itu membuka jendela.
     // LODO_TRAY_LOCK: jalankan tray kedua untuk pengujian.
     let lock = std::env::var("LODO_TRAY_LOCK").unwrap_or_else(|_| TRAY_LOCK.into());
-    let Ok(listener) = TcpListener::bind(&lock) else {
+    let mut bound = TcpListener::bind(&lock);
+    if after_update {
+        for _ in 0..100 {
+            if bound.is_ok() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(200));
+            bound = TcpListener::bind(&lock);
+        }
+    }
+    let Ok(listener) = bound else {
         shared::poke(&lock);
         return;
     };
