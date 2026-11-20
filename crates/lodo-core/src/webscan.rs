@@ -33,7 +33,7 @@ pub fn scan(ip: IpAddr, ports: &[u16]) -> Vec<WebApp> {
 
 fn check(ip: IpAddr, port: u16) -> Option<WebApp> {
     let addr = SocketAddr::new(ip, port);
-    if !crate::probe::reachable(ip, port, Duration::from_millis(1200)) {
+    if !crate::probe::connects(ip, port, Duration::from_millis(1200)) {
         return None;
     }
     let agent: ureq::Agent = ureq::Agent::config_builder()
