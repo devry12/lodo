@@ -49,7 +49,7 @@ pub struct Live {
 
 pub fn mood(live: &Live) -> (Mood, String) {
     if live.helper_version.is_none() {
-        return (Mood::Down, "Service not running".into());
+        return (Mood::Idle, "Not set up yet".into());
     }
     let s = &live.status;
     if s.is_empty() {
@@ -57,7 +57,7 @@ pub fn mood(live: &Live) -> (Mood, String) {
     }
     let down = s.iter().filter(|x| x.route == Route::Unreachable).count();
     if down > 0 {
-        return (Mood::Down, format!("{down} server(s) unreachable"));
+        return (Mood::Down, if down == 1 { "1 server unreachable".into() } else { format!("{down} servers unreachable") });
     }
     if s.iter().all(|x| x.route == Route::Unknown) {
         return (Mood::Idle, "Checking…".into());
